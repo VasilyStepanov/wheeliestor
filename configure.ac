@@ -44,5 +44,8 @@ AC_CONFIG_FILES([
     wheelio/Makefile
     wheelio/src/Makefile
     wheelio/tests/Makefile
+    server/Makefile
+    server/src/Makefile
+    server/tests/Makefile
 ])
 AC_OUTPUT

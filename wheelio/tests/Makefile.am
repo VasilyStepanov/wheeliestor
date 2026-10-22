@@ -15,7 +15,8 @@ test_all_SOURCES = main.cpp \
                    fd.hpp \
                    test_backend.cpp \
                    test_coro.cpp \
-                   test_reactor.cpp
+                   test_reactor.cpp \
+                   test_sync.cpp
 test_all_LDADD = $(top_builddir)/wheelio/src/libwheelio.la
 
 

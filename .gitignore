@@ -33,3 +33,4 @@ Makefile
 Makefile.in
 test_all
 /.install/
+wheelie-server
