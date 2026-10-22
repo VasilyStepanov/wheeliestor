@@ -38,3 +38,4 @@ fio-config/
 FIO-VERSION-FILE
 results/*
 !results/.gitkeep
+__pycache__/
