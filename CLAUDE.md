@@ -24,10 +24,16 @@ wheeliestor/
 │   ├── include/wheelio/  public headers: wheelio.h (C), coro.hpp, reactor.hpp, sync.hpp
 │   ├── src/              implementation + private headers (noinst .la)
 │   └── tests/            GoogleTest suite (test_all)
-├── wheelie/          the wire protocol (header only): include/wheelie/protocol.h
+├── wheelie/          the wire protocol and what a server and a client share (header
+│                     only): protocol.h, protocol_error.hpp, chunks.hpp
 ├── server/           wheelie-server, written on coroutines over wheelio
 │   ├── include/server/   headers the tests need: server.hpp, request_parser.hpp
 │   ├── src/              server, sessions, main.cpp (noinst .la + the binary)
+│   └── tests/            GoogleTest suite (test_all), runs a server in-process
+├── client/           the wheelie client, on coroutines, with a C interface of callbacks
+│   ├── include/wheelie/  client.h, the public C interface for engines
+│   ├── include/client/   client.hpp (the coroutine interface), response_parser.hpp
+│   ├── src/              the client, the C wrapper over it (noinst .la)
 │   └── tests/            GoogleTest suite (test_all), runs a server in-process
 ├── docs/             design notes, protocol.md (mirrors protocol.h)
 └── .github/tools/    clang-format and commit-message checks
