@@ -64,8 +64,8 @@ public:
   ~Client() { ::close(_fd); }
 
   void send_request(uint64_t cid, uint8_t op, uint64_t offset, uint64_t size,
-                    const std::vector<char> &payload = {}) {
-    WheelieRequestHeader header = {cid, offset, size, op};
+                    const std::vector<char> &payload = {}, uint8_t flags = 0) {
+    WheelieRequestHeader header = {cid, offset, size, op, flags};
     std::vector<char> bytes(sizeof(header) + payload.size());
     std::memcpy(bytes.data(), &header, sizeof(header));
     std::memcpy(bytes.data() + sizeof(header), payload.data(), payload.size());
@@ -186,7 +186,8 @@ TEST_P(ServerTest, DurableWriteThenRead) {
   Client client(_port);
   std::vector<char> data = pattern(8192, 2);
 
-  client.send_request(1, WHEELIE_OP_WRITE_SYNC, 0, data.size(), data);
+  client.send_request(1, WHEELIE_OP_WRITE, 0, data.size(), data,
+                      WHEELIE_FLAG_SYNC);
   EXPECT_EQ(client.read_response().res, 8192);
 
   client.send_request(2, WHEELIE_OP_READ, 0, 8192);
@@ -372,6 +373,19 @@ TEST_P(ServerTest, ClientMayLeaveWithRequestsInFlight) {
   Client other(_port);
   other.send_request(1, WHEELIE_OP_READ, 0, 4096);
   EXPECT_EQ(other.read_response().res, 4096);
+}
+
+TEST_P(ServerTest, UnknownFlagEndsTheConnection) {
+  Client client(_port);
+  std::vector<char> data = pattern(4096, 4);
+  client.send_request(1, WHEELIE_OP_WRITE, 0, data.size(), data, 0x80);
+  EXPECT_TRUE(client.closed_by_server());
+}
+
+TEST_P(ServerTest, ADurabilityFlagOnAReadEndsTheConnection) {
+  Client client(_port);
+  client.send_request(1, WHEELIE_OP_READ, 0, 4096, {}, WHEELIE_FLAG_SYNC);
+  EXPECT_TRUE(client.closed_by_server());
 }
 
 TEST_P(ServerTest, ConnectionsDoNotGetInEachOthersWay) {

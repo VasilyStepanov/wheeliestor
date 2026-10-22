@@ -15,8 +15,9 @@ using wheelie::RequestParser;
 namespace {
 
 std::vector<std::byte> encode(uint64_t cid, uint8_t op, uint64_t offset,
-                              uint64_t size, const std::vector<char> &payload) {
-  WheelieRequestHeader header = {cid, offset, size, op};
+                              uint64_t size, const std::vector<char> &payload,
+                              uint8_t flags = 0) {
+  WheelieRequestHeader header = {cid, offset, size, op, flags};
   std::vector<std::byte> bytes(sizeof(header) + payload.size());
   std::memcpy(bytes.data(), &header, sizeof(header));
   std::memcpy(bytes.data() + sizeof(header), payload.data(), payload.size());
@@ -83,12 +84,14 @@ TEST(RequestParser, ReadHasNoPayload) {
 TEST(RequestParser, WriteCarriesItsPayload) {
   RequestParser parser;
   std::vector<char> payload = pattern(4096, 'a');
-  auto requests = parse(
-      parser, encode(9, WHEELIE_OP_WRITE_SYNC, 512, payload.size(), payload),
-      10000);
+  auto requests = parse(parser,
+                        encode(9, WHEELIE_OP_WRITE, 512, payload.size(),
+                               payload, WHEELIE_FLAG_SYNC),
+                        10000);
 
   ASSERT_EQ(requests.size(), 1u);
-  EXPECT_EQ(requests[0].header.op, WHEELIE_OP_WRITE_SYNC);
+  EXPECT_EQ(requests[0].header.op, WHEELIE_OP_WRITE);
+  EXPECT_EQ(requests[0].header.flags, WHEELIE_FLAG_SYNC);
   ASSERT_EQ(requests[0].payload.size(), payload.size());
   EXPECT_EQ(
       std::memcmp(requests[0].payload.data(), payload.data(), payload.size()),
@@ -107,7 +110,7 @@ TEST(RequestParser, PiecesOfAnySizeGiveTheSameRequests) {
   stream.insert(stream.end(), read.begin(), read.end());
   stream.insert(stream.end(), small.begin(), small.end());
 
-  for (size_t piece : {1u, 2u, 7u, 24u, 25u, 26u, 100u, 5000u}) {
+  for (size_t piece : {1u, 2u, 7u, 25u, 26u, 27u, 100u, 5000u}) {
     RequestParser parser;
     auto requests = parse(parser, stream, piece);
     ASSERT_EQ(requests.size(), 3u) << piece;
@@ -150,6 +153,30 @@ TEST(RequestParser, KnowsWhenARequestIsUnfinished) {
 TEST(RequestParser, RejectsAnUnknownOperation) {
   RequestParser parser;
   EXPECT_THROW(parse(parser, encode(6, 9, 0, 0, {}), 100), ProtocolError);
+}
+
+TEST(RequestParser, FlagsAreEmptyUnlessAsked) {
+  RequestParser parser;
+  auto requests = parse(parser, encode(1, WHEELIE_OP_WRITE, 0, 0, {}), 100);
+  ASSERT_EQ(requests.size(), 1u);
+  EXPECT_EQ(requests[0].header.flags, 0u);
+}
+
+TEST(RequestParser, RejectsAnUnknownFlag) {
+  RequestParser parser;
+  EXPECT_THROW(
+      parse(parser,
+            encode(2, WHEELIE_OP_WRITE, 0, 0, {}, WHEELIE_FLAG_SYNC | 0x80),
+            100),
+      ProtocolError);
+}
+
+TEST(RequestParser, RejectsAFlagThatDoesNotApplyToARead) {
+  RequestParser parser;
+  EXPECT_THROW(parse(parser,
+                     encode(3, WHEELIE_OP_READ, 0, 4096, {}, WHEELIE_FLAG_SYNC),
+                     100),
+               ProtocolError);
 }
 
 TEST(RequestParser, RejectsAWriteLargerThanTheMaximum) {

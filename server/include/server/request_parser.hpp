@@ -36,8 +36,9 @@ struct Request {
 class RequestParser final {
 public:
   // Consumes `bytes` and calls `on_request(Request &&)` for each request that
-  // is complete. Throws ProtocolError for an unknown operation or a write
-  // larger than WHEELIE_MAX_PAYLOAD_SIZE.
+  // is complete. Throws ProtocolError for an unknown operation, a flag that
+  // is unknown or does not apply to it, or a write larger than
+  // WHEELIE_MAX_PAYLOAD_SIZE.
   template <typename OnRequest>
   void feed(std::span<const std::byte> bytes, OnRequest &&on_request) {
     while (!bytes.empty()) {
@@ -53,9 +54,14 @@ public:
         _have = 0;
         std::memcpy(&_request.header, _header_bytes, sizeof(_header_bytes));
         if (_request.header.op != WHEELIE_OP_READ &&
-            _request.header.op != WHEELIE_OP_WRITE &&
-            _request.header.op != WHEELIE_OP_WRITE_SYNC) {
+            _request.header.op != WHEELIE_OP_WRITE) {
           throw ProtocolError("wheelie: unknown request operation");
+        }
+        // The only flag there is applies to a write.
+        uint8_t allowed_flags =
+            _request.header.op == WHEELIE_OP_WRITE ? WHEELIE_FLAG_SYNC : 0;
+        if (_request.header.flags & ~allowed_flags) {
+          throw ProtocolError("wheelie: unknown or inapplicable request flag");
         }
         if (_request.header.op != WHEELIE_OP_READ) {
           if (_request.header.size > WHEELIE_MAX_PAYLOAD_SIZE) {

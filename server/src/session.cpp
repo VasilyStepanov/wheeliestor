@@ -218,7 +218,7 @@ void dispatch(Connection &connection, Request &&request) {
   } else {
     handle_write(connection, header.cid, header.offset,
                  std::move(request.payload),
-                 header.op == WHEELIE_OP_WRITE_SYNC);
+                 (header.flags & WHEELIE_FLAG_SYNC) != 0);
   }
 }
 
