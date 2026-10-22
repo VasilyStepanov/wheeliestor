@@ -19,11 +19,17 @@ runs. See
 
 ```
 wheeliestor/
-├── wheelio/          completion-style I/O reactor in C, one backend per mechanism
-│   ├── include/wheelio/  public header
+├── wheelio/          completion-style I/O reactor in C, one backend per mechanism,
+│   │                 and a header-only C++20 coroutine layer over it
+│   ├── include/wheelio/  public headers: wheelio.h (C), coro.hpp, reactor.hpp, sync.hpp
 │   ├── src/              implementation + private headers (noinst .la)
 │   └── tests/            GoogleTest suite (test_all)
-├── docs/             design notes
+├── wheelie/          the wire protocol (header only): include/wheelie/protocol.h
+├── server/           wheelie-server, written on coroutines over wheelio
+│   ├── include/server/   headers the tests need: server.hpp, request_parser.hpp
+│   ├── src/              server, sessions, main.cpp (noinst .la + the binary)
+│   └── tests/            GoogleTest suite (test_all), runs a server in-process
+├── docs/             design notes, protocol.md (mirrors protocol.h)
 └── .github/tools/    clang-format and commit-message checks
 ```
 
