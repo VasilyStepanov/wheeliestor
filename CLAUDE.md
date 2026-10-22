@@ -2,18 +2,17 @@
 
 ## What this project is
 
-wheeliestor is the workshop stand for a HighLoad++ talk about io_uring: a
-deliberately minimal block-access-over-TCP service (client + server) whose
-only purpose is to compare I/O mechanisms under the same load. It is not a
-production storage system. The load generator is a fork of fio with a
-wheelie ioengine, built from `3rdparty/`.
+wheeliestor is a stand for comparing I/O mechanisms: a deliberately minimal
+block-access-over-TCP service (client + server) whose only purpose is to run
+the same load over different mechanisms. It is not a production storage
+system. The load generator is fio, with an external engine, wheelie.so, that
+is built against the source of fio in `3rdparty/`.
 
 The compared mechanisms are the three backends of `wheelio/`: plain libc,
 alibc (libc with a worker-thread pool for disk I/O), and io_uring
 (optionally with multishot recv). Everything above the reactor is written
 once, so a backend is the only thing that differs between two benchmark
-runs. See
-`docs/design.md`.
+runs. See `docs/design.md`.
 
 ## Layout
 
@@ -98,7 +97,7 @@ CI (`.github/workflows/ci.yml`) runs on every push: a `linter` job
 - Plain `snake_case` for variables and functions, including file-scope
   constants; no prefixes like `k` or `m_`. C types are `CamelCase`, public C
   functions are prefixed `wio_`.
-- Documents (`README.md`, `docs/`, the talk) are written in Russian. This
+- Documents (`README.md`, `docs/`) are written in Russian. This
   guide, code comments, identifiers and commit messages stay in English.
 - Diagrams in Markdown are Mermaid blocks (`flowchart`, `sequenceDiagram`,
   `stateDiagram-v2`); byte layouts of the wire protocol are `text` blocks with
@@ -115,8 +114,8 @@ CI (`.github/workflows/ci.yml`) runs on every push: a `linter` job
   bug fixes, `ref/` refactoring.
 - Commit subjects: `<type>(<scope>): <summary>`, lowercase, imperative mood;
   types `add`, `fix`, `ref`, `docs`, `test`, `del`, `debug`. Scope is the
-  component directory (`wheelio`, `server`, `talk`, ...) or omitted for
-  repo-wide changes.
+  component directory (`wheelio`, `server`, `client`, `bench`, `talk`, ...) or
+  omitted for repo-wide changes.
 - Never push, including to a new branch. Commit locally and stop there; the
   user reviews what is about to be pushed and pushes it themselves.
 - Never make Claude (or any AI tool) an author or co-author of a commit: no
