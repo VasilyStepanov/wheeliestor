@@ -47,5 +47,8 @@ AC_CONFIG_FILES([
     server/Makefile
     server/src/Makefile
     server/tests/Makefile
+    client/Makefile
+    client/src/Makefile
+    client/tests/Makefile
 ])
 AC_OUTPUT

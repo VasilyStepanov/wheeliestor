@@ -4,22 +4,15 @@
 #include "aligned_buffer.hpp"
 
 #include <wheelie/protocol.h>
+#include <wheelie/protocol_error.hpp>
 
 #include <algorithm>
 #include <cstddef>
 #include <cstring>
 #include <span>
-#include <stdexcept>
 #include <utility>
 
 namespace wheelie {
-
-// A request that breaks the protocol; nothing that follows it on the
-// connection can be trusted.
-class ProtocolError : public std::runtime_error {
-public:
-  using std::runtime_error::runtime_error;
-};
 
 struct Request {
   WheelieRequestHeader header;
