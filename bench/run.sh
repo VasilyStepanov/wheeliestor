@@ -73,6 +73,10 @@ case $backend in
 libc | alibc | uring) ;;
 *) echo "bench/run.sh: --backend must be libc, alibc or uring" >&2; exit 2 ;;
 esac
+case $direct in
+0 | 1) ;;
+*) echo "bench/run.sh: --direct must be 0 or 1" >&2; exit 2 ;;
+esac
 
 DOCKER=${DOCKER:-docker}
 cd "$(dirname "$0")/.."
@@ -106,36 +110,65 @@ if [ "$multishot" = 1 ]; then
     ms_name=_ms
     ms_text=" multishot"
 fi
+direct_text=buffered
+if [ "$direct" = 1 ]; then
+    direct_text=O_DIRECT
+fi
 
 [ -n "$name" ] || name="${mode}_bs${bs}_qd${depth}_nj${numjobs}_${backend}${ms_name}_sync${sync}"
 mkdir -p "$out"
 out_abs=$(cd "$out" && pwd)
 
+# What compose is told goes to it in a file, not in the environment: docker run
+# with sudo does not get the environment of the script, and a variant that never
+# arrived would be a run of another one.
+env_file=$(mktemp)
+cat > "$env_file" << ENV
+WHEELIE_BACKEND=$backend
+WHEELIE_MULTISHOT=$multishot
+WHEELIE_DIRECT=$direct
+WHEELIE_THREADS=$threads
+WHEELIE_QUEUE_DEPTH=$queue_depth
+WHEELIE_FILE_SIZE_MB=$file_mb
+WHEELIE_RESULTS=$out_abs
+ENV
+
+compose() { $DOCKER compose --env-file "$env_file" "$@"; }
+
 cleanup() {
     if [ "$keep" = 0 ]; then
-        $DOCKER compose down > /dev/null 2>&1 || true
+        compose down > /dev/null 2>&1 || true
     fi
+    rm -f "$env_file"
 }
 trap cleanup EXIT
 
 if [ "$build" = 1 ]; then
     echo "== building the images"
-    $DOCKER compose build
+    compose build
 fi
 
-echo "== server: $backend$ms_text, direct=$direct, ${threads:-all} threads, queue depth $queue_depth"
-export WHEELIE_BACKEND=$backend WHEELIE_MULTISHOT=$multishot WHEELIE_DIRECT=$direct
-export WHEELIE_THREADS=$threads WHEELIE_QUEUE_DEPTH=$queue_depth
-export WHEELIE_FILE_SIZE_MB=$file_mb
-if ! $DOCKER compose up -d --force-recreate --wait server; then
+if ! compose up -d --force-recreate --wait server; then
     echo "bench/run.sh: the server does not start:" >&2
-    $DOCKER compose logs server >&2 || true
+    compose logs server >&2 || true
     exit 1
 fi
 
+# What the server says it was started with, which is what it was: a variant
+# that is only asked for is not a variant that is run.
+started=$(compose logs --no-log-prefix server 2> /dev/null | grep "listening on" | tail -1)
+echo "== server: ${started#wheelie-server: }"
+case $started in
+*"($backend$ms_text, "*"$direct_text)") ;;
+*)
+    echo "bench/run.sh: the server was not started as asked ($backend$ms_text, direct=$direct)" >&2
+    exit 1
+    ;;
+esac
+
 echo "== fio: $mode bs=$bs depth=$depth numjobs=$numjobs sync=$sync, ${ramp}s ramp and ${runtime}s measured"
 raw="/results/$name.out"
-$DOCKER compose run --rm -T --user "$(id -u):$(id -g)" client \
+compose run --rm -T --user "$(id -u):$(id -g)" client \
     fio --name="$name" \
     --ioengine=external:/usr/local/lib/wheelie.so \
     --filename='wheelie\://server\:39900' \
