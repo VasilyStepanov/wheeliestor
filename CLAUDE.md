@@ -35,7 +35,11 @@ wheeliestor/
 │   ├── include/client/   client.hpp (the coroutine interface), response_parser.hpp
 │   ├── src/              the client, the C wrapper over it (noinst .la)
 │   └── tests/            GoogleTest suite (test_all), runs a server in-process
-├── docs/             design notes, protocol.md (mirrors protocol.h)
+├── fio/              wheelie.so, an external engine of fio over the client
+│   └── tests/            smoke.sh: fio writes with checksums and reads back
+├── 3rdparty/fio/     the source of fio (a submodule, pinned): the engine is built
+│                     against it, and only fio of the same version loads it
+├── docs/             design notes, protocol.md (mirrors protocol.h), fio.md
 └── .github/tools/    clang-format and commit-message checks
 ```
 
@@ -49,11 +53,18 @@ GNU Autotools. C is `gnu99`, C++ is C++20, both with `-Wall -Wextra -Werror
 -fPIC`. liburing must be `>= 2.3`.
 
 ```
+git submodule update --init --depth 1
 ./autogen.sh
 ./configure --prefix=$PWD/.install
 make -j$(nproc)
 make test
 ```
+
+The fio engine is built against the source of fio in `3rdparty/fio` (a
+submodule; `--with-fio=DIR` takes another, `--without-fio` builds no engine).
+`make test` runs it under fio only if `fio --version` is the version of that
+source: build fio from the submodule (`cd 3rdparty/fio && ./configure && make`)
+and set `FIO` to it. `WHEELIE_FIO_REQUIRED=1` makes a skipped fio test fail.
 
 `--enable-asan` builds with AddressSanitizer. After editing `configure.ac` or any `Makefile.am`, rerun
 `./autogen.sh` and `./configure` with the same flags.

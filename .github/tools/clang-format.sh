@@ -16,7 +16,8 @@ function find_cmd() {
     local paths="$1"
     local cmd=""
 
-    cmd+="find . -type f "
+    # Code of other projects, and what is generated, is not ours to format.
+    cmd+="find . \( -path ./3rdparty -o -path ./fio/fio-config \) -prune -o -type f "
 
     cmd+="\( "
     local is_first=1
@@ -35,7 +36,7 @@ function find_cmd() {
         cmd+="-path \"${path}\" "
         is_first=0
     done
-    cmd+=" \)"
+    cmd+=" \) -print"
 
     echo "${cmd}"
 

@@ -30,6 +30,20 @@ extern "C" {
  */
 typedef struct WheelieClient WheelieClient;
 
+/**
+ * Splits the location of a server, which is wheelie://HOST:PORT, where HOST is
+ * a name or an IPv4 address.
+ *
+ * @param host      Receives HOST as a string.
+ * @param host_size Size of `host`, which has to hold HOST and the terminating
+ *                  zero.
+ * @param port      Receives PORT.
+ *
+ * @return 0, or -EINVAL if `location` is not of that form.
+ */
+int wheelie_location_parse(const char *location, char *host, size_t host_size,
+                           uint16_t *port);
+
 typedef struct {
   /* The server: a name or an IPv4 address, and a port. */
   const char *host;

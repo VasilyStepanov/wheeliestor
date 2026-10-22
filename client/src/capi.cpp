@@ -4,7 +4,10 @@
 
 #include <wheelio/coro.hpp>
 
+#include <cctype>
 #include <cerrno>
+#include <cstdlib>
+#include <cstring>
 #include <new>
 #include <system_error>
 
@@ -51,6 +54,48 @@ wheelio::DetachedTask run(Submit submit, WheelieCallback callback, void *data,
 } // namespace
 
 extern "C" {
+
+int wheelie_location_parse(const char *location, char *host, size_t host_size,
+                           uint16_t *port) {
+  static const char scheme[] = "wheelie://";
+
+  if (location == nullptr || host == nullptr || port == nullptr) {
+    return -EINVAL;
+  }
+  if (std::strncmp(location, scheme, sizeof(scheme) - 1) != 0) {
+    return -EINVAL;
+  }
+  const char *endpoint = location + sizeof(scheme) - 1;
+  const char *colon = std::strrchr(endpoint, ':');
+  if (colon == nullptr || colon == endpoint) {
+    return -EINVAL;
+  }
+
+  size_t host_length = static_cast<size_t>(colon - endpoint);
+  if (host_length >= host_size || std::memchr(endpoint, '/', host_length)) {
+    return -EINVAL;
+  }
+
+  // Only digits: strtol() would take a sign and a space as well.
+  const char *digits = colon + 1;
+  if (*digits == '\0') {
+    return -EINVAL;
+  }
+  for (const char *c = digits; *c != '\0'; ++c) {
+    if (!std::isdigit(static_cast<unsigned char>(*c))) {
+      return -EINVAL;
+    }
+  }
+  unsigned long value = std::strtoul(digits, nullptr, 10);
+  if (value < 1 || value > 65535) {
+    return -EINVAL;
+  }
+
+  std::memcpy(host, endpoint, host_length);
+  host[host_length] = '\0';
+  *port = static_cast<uint16_t>(value);
+  return 0;
+}
 
 int wheelie_client_create(const WheelieClientOptions *options,
                           WheelieClient **client) {
