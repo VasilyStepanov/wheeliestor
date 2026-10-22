@@ -37,6 +37,9 @@ wheeliestor/
 │   └── tests/            GoogleTest suite (test_all), runs a server in-process
 ├── fio/              wheelie.so, an external engine of fio over the client
 │   └── tests/            smoke.sh: fio writes with checksums and reads back
+├── docker/           the images of the stand: one Dockerfile, a server and a client target
+├── docker-compose.yml  the stand: the server and the client in two containers
+├── bench/            run.sh: starts the stand with a variant and runs fio in it
 ├── 3rdparty/fio/     the source of fio (a submodule, pinned): the engine is built
 │                     against it, and only fio of the same version loads it
 ├── docs/             design notes, protocol.md (mirrors protocol.h), fio.md
@@ -136,3 +139,5 @@ CI (`.github/workflows/ci.yml`) runs on every push: a `linter` job
   cancellation request: the kernel may still write into the buffer.
 - Numbers from the Docker-on-a-laptop stand are only comparable within the
   same stand; never compare them to bare-metal results.
+- Docker's default seccomp profile blocks io_uring: the stand's containers run
+  with `seccomp:unconfined`.
