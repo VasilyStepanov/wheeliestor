@@ -38,7 +38,9 @@ wheeliestor/
 │   └── tests/            smoke.sh: fio writes with checksums and reads back
 ├── docker/           the images of the stand: one Dockerfile, a server and a client target
 ├── docker-compose.yml  the stand: the server and the client in two containers
-├── bench/            run.sh: starts the stand with a variant and runs fio in it
+├── bench/            run.sh starts the stand with a variant and runs fio in it, matrix.sh
+│   │                 runs every variant on every load, report.py makes a table and a chart
+│   └── tests/            unittest suite for report.py and matrix.sh --dry-run
 ├── 3rdparty/fio/     the source of fio (a submodule, pinned): the engine is built
 │                     against it, and only fio of the same version loads it
 ├── docs/             design notes, protocol.md (mirrors protocol.h), fio.md

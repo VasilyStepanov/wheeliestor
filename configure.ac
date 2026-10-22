@@ -94,5 +94,6 @@ AC_CONFIG_FILES([
     client/src/Makefile
     client/tests/Makefile
     fio/Makefile
+    bench/Makefile
 ])
 AC_OUTPUT
