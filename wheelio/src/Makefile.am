@@ -10,6 +10,9 @@ AM_LDFLAGS = $(ASAN_LDFLAGS)
 
 
 libwheelio_la_SOURCES = $(top_srcdir)/wheelio/include/wheelio/wheelio.h \
-                        backend.c
+                        backend.c \
+                        reactor.c \
+                        reactor.h \
+                        uring.c
 
 libwheelio_la_LIBADD = $(LIBURING_LIBS)

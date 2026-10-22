@@ -18,14 +18,14 @@ extern "C" {
 #endif
 
 /**
- * wheelio is a completion-style I/O queue: the caller submits an operation,
- * the queue executes it, and a callback fires when it has completed.
+ * wheelio is a completion-style I/O reactor: the caller submits an operation,
+ * the reactor executes it, and a callback fires when it has completed.
  *
  * Contract
  * --------
  *
- * Threading. A queue belongs to one thread; none of its functions is safe to
- * call concurrently. Scale by creating one queue per thread.
+ * Threading. A reactor belongs to one thread; none of its functions is safe to
+ * call concurrently. Scale by creating one reactor per thread.
  *
  * Progress. Nothing happens until wio_wait() is called: submitting only
  * records the operation, and wio_wait() hands the recorded operations to the
@@ -34,7 +34,7 @@ extern "C" {
  * operations, and must not call wio_wait().
  *
  * Ownership. An operation is a WioOp owned by the caller, normally embedded
- * in the caller's own request state (see wio_container_of()). The queue
+ * in the caller's own request state (see wio_container_of()). The reactor
  * allocates nothing per operation. The WioOp, and every buffer and structure
  * it was submitted with, must stay valid until the operation's final callback
  * has run, even if the operation is cancelled: the backend may keep reading
@@ -53,8 +53,8 @@ extern "C" {
  */
 
 /**
- * I/O mechanism a queue executes its operations with. Everything above the
- * queue (protocol, server, client) is written once against the same
+ * I/O mechanism a reactor executes its operations with. Everything above the
+ * reactor (protocol, server, client) is written once against the same
  * interface, so switching a backend is the only difference between two
  * benchmark runs.
  */
@@ -83,7 +83,7 @@ const char *wio_backend_name(WioBackend backend);
  */
 int wio_backend_from_name(const char *name, WioBackend *backend);
 
-typedef struct WioQueue WioQueue;
+typedef struct WioReactor WioReactor;
 typedef struct WioOp WioOp;
 
 /** Set in `flags` of a callback when more callbacks will follow. */
@@ -113,7 +113,7 @@ typedef void (*WioCallback)(WioOp *op, int result, unsigned int flags);
  * Completion callback of wio_recv_multishot().
  *
  * @param op     The operation that completed.
- * @param data   `result` bytes the queue received, or NULL if `result <= 0`.
+ * @param data   `result` bytes the reactor received, or NULL if `result <= 0`.
  *               Valid only until the callback returns: copy what is needed.
  * @param result Number of bytes in `data`; 0 is end of stream and -errno an
  *               error, both final.
@@ -132,24 +132,8 @@ struct WioOp {
     WioCallback op;
     WioRecvCallback recv;
   } _cb;
-  WioQueue *_queue;
-  unsigned int _kind;
-  int _fd;
-  void *_ptr;
-  size_t _size;
-  uint64_t _offset;
-  unsigned int _flags;
-  union {
-    struct {
-      socklen_t *addrlen;
-    } _accept;
-    struct {
-      size_t entry_size;
-      unsigned int entries;
-    } _recv_ms;
-  } _u;
-  WioOp *_next;
-  WioOp *_prev;
+  WioReactor *_reactor;
+  bool _cancelled;
   void *_backend;
 };
 
@@ -160,26 +144,27 @@ struct WioOp {
   ((type *)((char *)(ptr) - offsetof(type, member)))
 
 /**
- * @param backend Mechanism the queue executes operations with.
+ * @param backend Mechanism the reactor executes operations with.
  * @param depth   Maximum number of operations in flight; must not be 0.
- * @param queue   Receives the new queue on success.
+ * @param reactor   Receives the new reactor on success.
  *
  * @return 0 on success, -errno on failure (-EINVAL for a zero `depth`,
  *         -EPERM when io_uring is blocked by a seccomp profile).
  */
-int wio_queue_create(WioBackend backend, unsigned int depth, WioQueue **queue);
+int wio_reactor_create(WioBackend backend, unsigned int depth,
+                       WioReactor **reactor);
 
 /**
- * Destroys a queue. No operation may be in flight: cancel them, and run
- * wio_wait() until wio_queue_inflight() is 0.
+ * Destroys a reactor. No operation may be in flight: cancel them, and run
+ * wio_wait() until wio_reactor_inflight() is 0.
  */
-void wio_queue_delete(WioQueue *queue);
+void wio_reactor_delete(WioReactor *reactor);
 
 /**
  * @return Number of operations submitted and not yet finished, i.e. those
  *         whose final callback has not run.
  */
-unsigned int wio_queue_inflight(const WioQueue *queue);
+unsigned int wio_reactor_inflight(const WioReactor *reactor);
 
 /**
  * Hands the submitted operations to the backend, waits for completions and
@@ -189,58 +174,65 @@ unsigned int wio_queue_inflight(const WioQueue *queue);
  *                   what has already completed, -1 to wait until something
  *                   completes.
  *
- * @return Number of callbacks run, 0 if the timeout expired first, or
- *         -errno on failure.
+ * @return Number of callbacks run, 0 if the timeout expired first or nothing
+ *         is in flight (nothing could ever complete, so it does not wait),
+ *         or -errno on failure.
  */
-int wio_wait(WioQueue *queue, int timeout_ms);
+int wio_wait(WioReactor *reactor, int timeout_ms);
 
 /**
  * @param addr    Receives the peer address, may be NULL. Must stay valid
  *                until the callback.
  * @param addrlen In/out size of `addr`; NULL iff `addr` is NULL.
  */
-int wio_accept(WioQueue *queue, WioOp *op, int fd, struct sockaddr *addr,
+int wio_accept(WioReactor *reactor, WioOp *op, int fd, struct sockaddr *addr,
                socklen_t *addrlen, WioCallback cb);
 
 /** `addr` must stay valid until the callback. */
-int wio_connect(WioQueue *queue, WioOp *op, int fd, const struct sockaddr *addr,
-                socklen_t addrlen, WioCallback cb);
+int wio_connect(WioReactor *reactor, WioOp *op, int fd,
+                const struct sockaddr *addr, socklen_t addrlen, WioCallback cb);
 
 /** Cancel everything in flight on `fd` first. */
-int wio_close(WioQueue *queue, WioOp *op, int fd, WioCallback cb);
+int wio_close(WioReactor *reactor, WioOp *op, int fd, WioCallback cb);
 
 /** `buf` must stay valid until the callback. */
-int wio_recv(WioQueue *queue, WioOp *op, int fd, void *buf, size_t size,
+int wio_recv(WioReactor *reactor, WioOp *op, int fd, void *buf, size_t size,
              unsigned int flags, WioCallback cb);
 
 /**
  * Receives from `fd` until cancelled, end of stream or an error, with no
- * resubmission per chunk. The queue owns the receive buffers: it takes
+ * resubmission per chunk. The reactor owns the receive buffers: it takes
  * `entries` buffers of `entry_size` bytes, hands each received chunk to `cb`
  * and takes the buffer back when `cb` returns. A chunk is at most
- * `entry_size` bytes.
+ * `entry_size` bytes. When the buffers run out the reactor re-arms the receive
+ * by itself and chunks keep coming.
+ *
+ * @param entries Number of buffers; a power of two, at most 32768.
  */
-int wio_recv_multishot(WioQueue *queue, WioOp *op, int fd, size_t entry_size,
-                       unsigned int entries, unsigned int flags,
-                       WioRecvCallback cb);
-
-/** `buf` must stay valid until the callback. */
-int wio_send(WioQueue *queue, WioOp *op, int fd, const void *buf, size_t size,
-             unsigned int flags, WioCallback cb);
+int wio_recv_multishot(WioReactor *reactor, WioOp *op, int fd,
+                       size_t entry_size, unsigned int entries,
+                       unsigned int flags, WioRecvCallback cb);
 
 /**
- * Gathered send. `msg` and everything it points to must stay valid until the
+ * MSG_NOSIGNAL is always added to `flags`. `buf` must stay valid until the
  * callback.
  */
-int wio_sendmsg(WioQueue *queue, WioOp *op, int fd, const struct msghdr *msg,
-                unsigned int flags, WioCallback cb);
+int wio_send(WioReactor *reactor, WioOp *op, int fd, const void *buf,
+             size_t size, unsigned int flags, WioCallback cb);
+
+/**
+ * Gathered send. MSG_NOSIGNAL is always added to `flags`. `msg` and
+ * everything it points to must stay valid until the callback.
+ */
+int wio_sendmsg(WioReactor *reactor, WioOp *op, int fd,
+                const struct msghdr *msg, unsigned int flags, WioCallback cb);
 
 /**
  * Reads at `offset` without changing the file position. For a descriptor
  * opened with O_DIRECT, `buf`, `size` and `offset` must be aligned as
  * O_DIRECT requires. `buf` must stay valid until the callback.
  */
-int wio_pread(WioQueue *queue, WioOp *op, int fd, void *buf, size_t size,
+int wio_pread(WioReactor *reactor, WioOp *op, int fd, void *buf, size_t size,
               uint64_t offset, WioCallback cb);
 
 /**
@@ -249,11 +241,12 @@ int wio_pread(WioQueue *queue, WioOp *op, int fd, void *buf, size_t size,
  *
  * @param flags WIO_WRITE_DSYNC to make the data durable before completing.
  */
-int wio_pwrite(WioQueue *queue, WioOp *op, int fd, const void *buf, size_t size,
-               uint64_t offset, unsigned int flags, WioCallback cb);
+int wio_pwrite(WioReactor *reactor, WioOp *op, int fd, const void *buf,
+               size_t size, uint64_t offset, unsigned int flags,
+               WioCallback cb);
 
 /** @param datasync Skip metadata that is not needed to read the data back. */
-int wio_fsync(WioQueue *queue, WioOp *op, int fd, bool datasync,
+int wio_fsync(WioReactor *reactor, WioOp *op, int fd, bool datasync,
               WioCallback cb);
 
 /**
@@ -266,13 +259,13 @@ int wio_fsync(WioQueue *queue, WioOp *op, int fd, bool datasync,
  *
  * @return 0 if the request was recorded, -errno otherwise.
  */
-int wio_cancel(WioQueue *queue, WioOp *target);
+int wio_cancel(WioReactor *reactor, WioOp *target);
 
 /**
  * Asks for every operation in flight on `fd` to be cancelled. Safe to call
  * when none is.
  */
-int wio_cancel_fd(WioQueue *queue, int fd);
+int wio_cancel_fd(WioReactor *reactor, int fd);
 
 #ifdef __cplusplus
 }
