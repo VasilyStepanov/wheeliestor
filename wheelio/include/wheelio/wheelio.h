@@ -133,24 +133,7 @@ struct WioOp {
     WioRecvCallback recv;
   } _cb;
   WioReactor *_reactor;
-  unsigned int _opcode;
-  int _fd;
-  void *_ptr;
-  size_t _size;
-  uint64_t _offset;
-  unsigned int _flags;
   bool _cancelled;
-  union {
-    struct {
-      socklen_t *addrlen;
-    } _accept;
-    struct {
-      size_t entry_size;
-      unsigned int entries;
-    } _recv_ms;
-  } _u;
-  WioOp *_next;
-  WioOp *_prev;
   void *_backend;
 };
 
