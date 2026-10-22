@@ -55,6 +55,10 @@ make test
   probes of implementation details.
 - A new backend runs the same behavioral test suite as the others.
 
+CI (`.github/workflows/ci.yml`) runs on every push: a `linter` job
+(`.github/tools/commit-messages.sh`, then the clang-format check) and a
+`tests` job that builds with `--enable-asan` and runs `make test`.
+
 ## Code style
 
 - `.clang-format` (plain LLVM style, no overrides). Before
