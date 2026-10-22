@@ -12,8 +12,11 @@ LT_INIT
 
 AC_CONFIG_MACRO_DIRS([m4])
 
-AC_SUBST([GENERIC_CFLAGS], ["-std=gnu99 -Wall -Wextra -Werror -fPIC"])
-AC_SUBST([GENERIC_CXXFLAGS], ["-std=c++20 -Wall -Wextra -Werror -fPIC"])
+AC_SUBST([GENERIC_CFLAGS], ["-std=gnu99 -Wall -Wextra -Werror -fPIC -pthread"])
+AC_SUBST([GENERIC_CXXFLAGS], ["-std=c++20 -Wall -Wextra -Werror -fPIC -pthread"])
+
+# The alibc backend runs its disk I/O on pthreads.
+AC_SEARCH_LIBS([pthread_create], [pthread])
 
 
 PKG_CHECK_MODULES([GTEST], [gtest])

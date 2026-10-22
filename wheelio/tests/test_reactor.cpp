@@ -338,6 +338,49 @@ TEST_P(ReactorTest, PwritePreadFsync) {
   EXPECT_EQ(memcmp(in, out, sizeof(out)), 0);
 }
 
+TEST_P(ReactorTest, ManyDiskOperationsAtOnce) {
+  WioReactor *wide = nullptr;
+  ASSERT_EQ(wio_reactor_create(GetParam(), 64, &wide), 0);
+  char path[] = "/tmp/wheelio-test-XXXXXX";
+  Fd file(mkstemp(path));
+  ASSERT_GE(file.get(), 0);
+  ASSERT_EQ(unlink(path), 0);
+
+  constexpr int count = 64;
+  constexpr size_t block = 4096;
+  static char out[count][block];
+  static char in[count][block];
+  Request write[count] = {}, read[count] = {};
+
+  for (int i = 0; i < count; ++i) {
+    memset(out[i], 'a' + i % 26, block);
+    ASSERT_EQ(wio_pwrite(wide, &write[i].op, file.get(), out[i], block,
+                         i * block, i % 2 ? WIO_WRITE_DSYNC : 0, on_done),
+              0);
+  }
+  while (wio_reactor_inflight(wide) > 0) {
+    ASSERT_GE(wio_wait(wide, 1000), 0);
+  }
+  for (int i = 0; i < count; ++i) {
+    ASSERT_EQ(write[i].calls, 1) << i;
+    ASSERT_EQ(write[i].result, static_cast<int>(block)) << i;
+  }
+
+  for (int i = 0; i < count; ++i) {
+    ASSERT_EQ(wio_pread(wide, &read[i].op, file.get(), in[i], block, i * block,
+                        on_done),
+              0);
+  }
+  while (wio_reactor_inflight(wide) > 0) {
+    ASSERT_GE(wio_wait(wide, 1000), 0);
+  }
+  for (int i = 0; i < count; ++i) {
+    ASSERT_EQ(read[i].result, static_cast<int>(block)) << i;
+    ASSERT_EQ(memcmp(in[i], out[i], block), 0) << i;
+  }
+  wio_reactor_delete(wide);
+}
+
 TEST_P(ReactorTest, AcceptAndConnect) {
   Fd listener(socket(AF_INET, SOCK_STREAM, 0));
   ASSERT_GE(listener.get(), 0);
@@ -483,7 +526,8 @@ TEST_P(ReactorTest, ManyMultishotReceivesComeAndGo) {
 }
 
 INSTANTIATE_TEST_SUITE_P(Backends, ReactorTest,
-                         ::testing::Values(WIO_BACKEND_LIBC, WIO_BACKEND_URING),
+                         ::testing::Values(WIO_BACKEND_LIBC, WIO_BACKEND_ALIBC,
+                                           WIO_BACKEND_URING),
                          [](const ::testing::TestParamInfo<WioBackend> &info) {
                            return std::string(wio_backend_name(info.param));
                          });
