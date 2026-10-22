@@ -1,3 +1,5 @@
+#include "fd.hpp"
+
 #include <wheelio/wheelio.h>
 
 #include <gtest/gtest.h>
@@ -15,33 +17,6 @@
 #include <functional>
 
 namespace {
-
-// Closes the descriptor it holds, if any.
-class Fd {
-public:
-  Fd() = default;
-  explicit Fd(int fd) : fd_(fd) {}
-  Fd(const Fd &) = delete;
-  Fd &operator=(const Fd &) = delete;
-  ~Fd() { reset(); }
-
-  int get() const { return fd_; }
-
-  void reset() {
-    if (fd_ >= 0) {
-      ::close(fd_);
-      fd_ = -1;
-    }
-  }
-
-  void reset(int fd) {
-    reset();
-    fd_ = fd;
-  }
-
-private:
-  int fd_ = -1;
-};
 
 struct Request {
   WioOp op;
@@ -119,13 +94,6 @@ protected:
     return run_until([this] { return wio_reactor_inflight(reactor_) == 0; });
   }
 
-  static void socket_pair(Fd &a, Fd &b) {
-    int fds[2];
-    ASSERT_EQ(socketpair(AF_UNIX, SOCK_STREAM, 0, fds), 0);
-    a.reset(fds[0]);
-    b.reset(fds[1]);
-  }
-
   WioReactor *reactor_ = nullptr;
 };
 
@@ -139,7 +107,7 @@ TEST(Reactor, CreateRejectsInvalidDepth) {
 
 TEST_P(ReactorTest, SendAndRecv) {
   Fd a, b;
-  socket_pair(a, b);
+  ASSERT_TRUE(socket_pair(a, b));
   const char out[] = "hello";
   char in[16] = {};
   Request send = {}, recv = {};
@@ -160,7 +128,7 @@ TEST_P(ReactorTest, SendAndRecv) {
 
 TEST_P(ReactorTest, SendmsgGathersBuffers) {
   Fd a, b;
-  socket_pair(a, b);
+  ASSERT_TRUE(socket_pair(a, b));
   char head[] = "head-";
   char body[] = "body";
   iovec iov[2] = {{head, 5}, {body, 4}};
@@ -183,7 +151,7 @@ TEST_P(ReactorTest, SendmsgGathersBuffers) {
 
 TEST_P(ReactorTest, RecvSeesEndOfStream) {
   Fd a, b;
-  socket_pair(a, b);
+  ASSERT_TRUE(socket_pair(a, b));
   char in[16];
   Request recv = {};
 
@@ -196,7 +164,7 @@ TEST_P(ReactorTest, RecvSeesEndOfStream) {
 
 TEST_P(ReactorTest, SendToClosedPeerFailsWithoutSignal) {
   Fd a, b;
-  socket_pair(a, b);
+  ASSERT_TRUE(socket_pair(a, b));
   b.reset();
   Request send = {};
 
@@ -213,7 +181,7 @@ TEST_P(ReactorTest, WaitReturnsZeroWhenNothingIsInFlight) {
 
 TEST_P(ReactorTest, WaitTimesOutAndReportsCallbacks) {
   Fd a, b;
-  socket_pair(a, b);
+  ASSERT_TRUE(socket_pair(a, b));
   char in[16];
   Request recv = {};
 
@@ -232,7 +200,7 @@ TEST_P(ReactorTest, SubmitBeyondDepthIsBusy) {
   WioReactor *small = nullptr;
   ASSERT_EQ(wio_reactor_create(GetParam(), 2, &small), 0);
   Fd a, b;
-  socket_pair(a, b);
+  ASSERT_TRUE(socket_pair(a, b));
   char in[3][8];
   Request recv[3] = {};
 
@@ -254,7 +222,7 @@ TEST_P(ReactorTest, SubmitBeyondDepthIsBusy) {
 
 TEST_P(ReactorTest, CancelCompletesWithCanceled) {
   Fd a, b;
-  socket_pair(a, b);
+  ASSERT_TRUE(socket_pair(a, b));
   char in[16];
   Request recv = {};
 
@@ -268,8 +236,8 @@ TEST_P(ReactorTest, CancelCompletesWithCanceled) {
 
 TEST_P(ReactorTest, CancelFdCancelsEveryOperationOnIt) {
   Fd a, b, c, d;
-  socket_pair(a, b);
-  socket_pair(c, d);
+  ASSERT_TRUE(socket_pair(a, b));
+  ASSERT_TRUE(socket_pair(c, d));
   char in[3][8];
   Request on_b[2] = {}, on_d = {};
 
@@ -426,7 +394,7 @@ TEST_P(ReactorTest, AcceptAndConnect) {
 
 TEST_P(ReactorTest, RecvMultishotRejectsBadRing) {
   Fd a, b;
-  socket_pair(a, b);
+  ASSERT_TRUE(socket_pair(a, b));
   StreamRequest stream = {};
 
   EXPECT_EQ(
@@ -443,7 +411,7 @@ TEST_P(ReactorTest, RecvMultishotRejectsBadRing) {
 
 TEST_P(ReactorTest, RecvMultishotDeliversChunksUntilCancelled) {
   Fd a, b;
-  socket_pair(a, b);
+  ASSERT_TRUE(socket_pair(a, b));
   StreamRequest stream = {};
 
   ASSERT_EQ(
@@ -474,7 +442,7 @@ TEST_P(ReactorTest, RecvMultishotDeliversChunksUntilCancelled) {
 
 TEST_P(ReactorTest, RecvMultishotSeesEndOfStream) {
   Fd a, b;
-  socket_pair(a, b);
+  ASSERT_TRUE(socket_pair(a, b));
   StreamRequest stream = {};
 
   ASSERT_EQ(
@@ -489,7 +457,7 @@ TEST_P(ReactorTest, RecvMultishotSeesEndOfStream) {
 
 TEST_P(ReactorTest, RecvMultishotSurvivesRunningOutOfBuffers) {
   Fd a, b;
-  socket_pair(a, b);
+  ASSERT_TRUE(socket_pair(a, b));
   StreamRequest stream = {};
   char out[4096];
   for (size_t i = 0; i < sizeof(out); ++i) {
@@ -514,7 +482,7 @@ TEST_P(ReactorTest, ManyMultishotReceivesComeAndGo) {
   // More receives over a reactor's lifetime than there are buffer group ids.
   for (int i = 0; i < 70000; ++i) {
     Fd a, b;
-    socket_pair(a, b);
+    ASSERT_TRUE(socket_pair(a, b));
     StreamRequest stream = {};
     ASSERT_EQ(
         wio_recv_multishot(reactor_, &stream.op, b.get(), 16, 2, 0, on_chunk),
