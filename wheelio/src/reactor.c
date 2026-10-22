@@ -12,9 +12,9 @@ int wio_reactor_create(WioBackend backend, unsigned int depth,
   case WIO_BACKEND_URING:
     return wio_uring_reactor_create(depth, reactor);
   case WIO_BACKEND_LIBC:
-    return wio_libc_reactor_create(depth, reactor);
+    return wio_libc_reactor_create(depth, 0, reactor);
   case WIO_BACKEND_ALIBC:
-    return -ENOSYS;
+    return wio_libc_reactor_create(depth, WIO_ALIBC_THREADS, reactor);
   }
   return -EINVAL;
 }

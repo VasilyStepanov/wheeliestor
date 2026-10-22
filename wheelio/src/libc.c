@@ -1,5 +1,6 @@
 #define _GNU_SOURCE
 
+#include "pool.h"
 #include "reactor.h"
 
 #include <errno.h>
@@ -12,15 +13,20 @@
 #include <unistd.h>
 
 /*
- * Plain libc: sockets are driven with poll() and nonblocking calls, disk
- * I/O is an ordinary blocking call made by the loop itself.
+ * Plain libc: sockets are driven with poll() and nonblocking calls. Disk I/O
+ * is an ordinary blocking call, made either by the loop itself or, if the
+ * reactor has a pool, by one of its worker threads.
  *
  * An operation is on exactly one list at a time:
  *  - submitted: recorded, not tried yet;
  *  - waiting: its descriptor was not ready, so it is parked on poll();
- *  - completed: its result is known and its callback has not run.
+ *  - completed: its result is known and its callback has not run;
+ *  - pool: a worker has it, and it is on no list of the reactor.
  * Callbacks run only after the syscalls of a wait are done, so they are free
  * to cancel and submit.
+ *
+ * An operation in the pool cannot be cancelled: its syscall is not
+ * interrupted, and it completes with its own result.
  */
 
 enum {
@@ -28,6 +34,7 @@ enum {
   LIST_SUBMITTED,
   LIST_WAITING,
   LIST_COMPLETED,
+  LIST_POOL,
   LIST_COUNT,
 };
 
@@ -55,9 +62,12 @@ typedef struct {
 typedef struct {
   WioReactor base;
   List lists[LIST_COUNT];
-  /* One slot per operation that can be waiting. */
+  /* One slot per operation that can be waiting, and one for the pool. */
   struct pollfd *pfds;
   WioOp **pops;
+  WioPool *pool;
+  /* Operations handed to the pool and not yet taken back. */
+  unsigned int pool_pending;
 } LibcReactor;
 
 #define RETRY(call)                                                            \
@@ -278,6 +288,34 @@ static int libc_cancel_fd(WioReactor *base, int fd) {
   return 0;
 }
 
+/* The blocking calls on a file, the part that may take a long time. */
+static int disk_op(const WioOp *op) {
+  int fd = op->_poll.fd;
+  ssize_t ret;
+
+  switch (op->_poll.opcode) {
+  case OP_PREAD:
+    ret = RETRY(
+        pread(fd, op->_poll.ptr, op->_poll.size, (off_t)op->_poll.offset));
+    break;
+  case OP_PWRITE:
+    if (op->_poll.flags & WIO_WRITE_DSYNC) {
+      struct iovec iov = {op->_poll.ptr, op->_poll.size};
+      ret = RETRY(pwritev2(fd, &iov, 1, (off_t)op->_poll.offset, RWF_DSYNC));
+    } else {
+      ret = RETRY(
+          pwrite(fd, op->_poll.ptr, op->_poll.size, (off_t)op->_poll.offset));
+    }
+    break;
+  default:
+    ret = RETRY(op->_poll.flags ? fdatasync(fd) : fsync(fd));
+    break;
+  }
+  return errno_result(ret);
+}
+
+static void pool_work(WioOp *op) { op->_poll.result = disk_op(op); }
+
 /*
  * Does what `op` asks for. It either gets a result, or, for a socket that is
  * not ready, is parked until it is. `op` is on no list.
@@ -341,21 +379,16 @@ static void run(LibcReactor *reactor, WioOp *op) {
     }
     break;
   case OP_PREAD:
-    ret = RETRY(
-        pread(fd, op->_poll.ptr, op->_poll.size, (off_t)op->_poll.offset));
-    break;
   case OP_PWRITE:
-    if (op->_poll.flags & WIO_WRITE_DSYNC) {
-      struct iovec iov = {op->_poll.ptr, op->_poll.size};
-      ret = RETRY(pwritev2(fd, &iov, 1, (off_t)op->_poll.offset, RWF_DSYNC));
-    } else {
-      ret = RETRY(
-          pwrite(fd, op->_poll.ptr, op->_poll.size, (off_t)op->_poll.offset));
-    }
-    break;
   case OP_FSYNC:
-    ret = RETRY(op->_poll.flags ? fdatasync(fd) : fsync(fd));
-    break;
+    if (reactor->pool != NULL) {
+      op->_poll.list = LIST_POOL;
+      ++reactor->pool_pending;
+      wio_pool_submit(reactor->pool, op);
+    } else {
+      finish(reactor, op, disk_op(op));
+    }
+    return;
   default:
     ret = -1;
     errno = EINVAL;
@@ -404,6 +437,17 @@ static int deliver(LibcReactor *reactor) {
   return callbacks;
 }
 
+/* Takes the operations the workers have finished. */
+static void reap(LibcReactor *reactor) {
+  WioOp *op = wio_pool_take_done(reactor->pool);
+  while (op != NULL) {
+    WioOp *next = op->_poll.next;
+    --reactor->pool_pending;
+    list_push(reactor, LIST_COMPLETED, op);
+    op = next;
+  }
+}
+
 static int libc_wait(WioReactor *base, int timeout_ms) {
   LibcReactor *reactor = libc_reactor(base);
   WioOp *op;
@@ -414,8 +458,14 @@ static int libc_wait(WioReactor *base, int timeout_ms) {
     run(reactor, op);
   }
 
+  if (reactor->pool_pending > 0) {
+    reap(reactor);
+  }
+
+  /* Whatever is still in the pool is waited for through its pipe. */
+  bool pool_wake = reactor->pool_pending > 0;
   List *waiting = &reactor->lists[LIST_WAITING];
-  if (waiting->count > 0) {
+  if (waiting->count > 0 || pool_wake) {
     unsigned int n = 0;
     for (op = waiting->head; op != NULL; op = op->_poll.next, ++n) {
       reactor->pfds[n].fd = op->_poll.fd;
@@ -423,11 +473,18 @@ static int libc_wait(WioReactor *base, int timeout_ms) {
       reactor->pfds[n].revents = 0;
       reactor->pops[n] = op;
     }
+    unsigned int total = n;
+    if (pool_wake) {
+      reactor->pfds[total].fd = wio_pool_wake_fd(reactor->pool);
+      reactor->pfds[total].events = POLLIN;
+      reactor->pfds[total].revents = 0;
+      ++total;
+    }
 
     /* Results already in hand are not worth waiting for more. */
     int poll_timeout =
         reactor->lists[LIST_COMPLETED].count > 0 ? 0 : timeout_ms;
-    int ready = poll(reactor->pfds, n, poll_timeout);
+    int ready = poll(reactor->pfds, total, poll_timeout);
     if (ready < 0 && errno != EINTR) {
       return -errno;
     }
@@ -438,6 +495,9 @@ static int libc_wait(WioReactor *base, int timeout_ms) {
         run(reactor, op);
       }
     }
+    if (pool_wake && ready > 0 && reactor->pfds[n].revents != 0) {
+      reap(reactor);
+    }
   }
 
   return deliver(reactor);
@@ -445,6 +505,9 @@ static int libc_wait(WioReactor *base, int timeout_ms) {
 
 static void libc_destroy(WioReactor *base) {
   LibcReactor *reactor = libc_reactor(base);
+  if (reactor->pool != NULL) {
+    wio_pool_destroy(reactor->pool);
+  }
   free(reactor->pfds);
   free(reactor->pops);
   free(reactor);
@@ -467,16 +530,24 @@ static const WioReactorOps libc_ops = {
     .fsync = libc_fsync,
 };
 
-int wio_libc_reactor_create(unsigned int depth, WioReactor **out) {
+int wio_libc_reactor_create(unsigned int depth, unsigned int threads,
+                            WioReactor **out) {
   LibcReactor *reactor = calloc(1, sizeof(*reactor));
   if (reactor == NULL) {
     return -ENOMEM;
   }
-  reactor->pfds = calloc(depth, sizeof(*reactor->pfds));
+  reactor->pfds = calloc(depth + 1, sizeof(*reactor->pfds));
   reactor->pops = calloc(depth, sizeof(*reactor->pops));
   if (reactor->pfds == NULL || reactor->pops == NULL) {
     libc_destroy(&reactor->base);
     return -ENOMEM;
+  }
+  if (threads > 0) {
+    int ret = wio_pool_create(threads, pool_work, &reactor->pool);
+    if (ret < 0) {
+      libc_destroy(&reactor->base);
+      return ret;
+    }
   }
 
   reactor->base.ops = &libc_ops;

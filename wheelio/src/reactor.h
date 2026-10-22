@@ -5,6 +5,9 @@
 
 #define WIO_RECV_MAX_ENTRIES 32768u
 
+/* Size of the disk worker pool of the alibc backend. */
+#define WIO_ALIBC_THREADS 4u
+
 /*
  * What a backend does for each operation. The generic layer has already
  * checked the arguments, claimed a place in the reactor for `op` and stored
@@ -56,6 +59,9 @@ void wio_reactor_complete_recv(WioOp *op, const void *data, int result,
                                unsigned int flags);
 
 int wio_uring_reactor_create(unsigned int depth, WioReactor **reactor);
-int wio_libc_reactor_create(unsigned int depth, WioReactor **reactor);
+/* A reactor that runs disk I/O itself if `threads` is 0, and on a pool of
+ * that many worker threads otherwise. */
+int wio_libc_reactor_create(unsigned int depth, unsigned int threads,
+                            WioReactor **reactor);
 
 #endif /* WHEELIO_SRC_REACTOR_H */
