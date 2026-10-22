@@ -56,5 +56,6 @@ void wio_reactor_complete_recv(WioOp *op, const void *data, int result,
                                unsigned int flags);
 
 int wio_uring_reactor_create(unsigned int depth, WioReactor **reactor);
+int wio_libc_reactor_create(unsigned int depth, WioReactor **reactor);
 
 #endif /* WHEELIO_SRC_REACTOR_H */

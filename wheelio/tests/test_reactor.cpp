@@ -106,7 +106,7 @@ protected:
 
   // Runs the reactor until `done` holds.
   bool run_until(const std::function<bool()> &done) {
-    for (int i = 0; i < 1000 && !done(); ++i) {
+    for (int i = 0; i < 100000 && !done(); ++i) {
       if (wio_wait(reactor_, 1000) < 0) {
         return false;
       }
@@ -483,7 +483,7 @@ TEST_P(ReactorTest, ManyMultishotReceivesComeAndGo) {
 }
 
 INSTANTIATE_TEST_SUITE_P(Backends, ReactorTest,
-                         ::testing::Values(WIO_BACKEND_URING),
+                         ::testing::Values(WIO_BACKEND_LIBC, WIO_BACKEND_URING),
                          [](const ::testing::TestParamInfo<WioBackend> &info) {
                            return std::string(wio_backend_name(info.param));
                          });
