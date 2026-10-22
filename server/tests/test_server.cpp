@@ -5,6 +5,7 @@
 #include <gtest/gtest.h>
 
 #include <arpa/inet.h>
+#include <dirent.h>
 #include <fcntl.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
@@ -14,8 +15,11 @@
 #include <algorithm>
 #include <cerrno>
 #include <chrono>
+#include <climits>
+#include <cstdlib>
 #include <cstring>
 #include <map>
+#include <optional>
 #include <string>
 #include <system_error>
 #include <tuple>
@@ -121,6 +125,30 @@ private:
   int _fd;
   std::map<uint64_t, bool> _reads;
 };
+
+// The flags this process has the file at `path` open with, if it has it open.
+std::optional<int> open_flags_of(const std::string &path) {
+  char resolved[PATH_MAX];
+  if (realpath(path.c_str(), resolved) == nullptr) {
+    return std::nullopt;
+  }
+  DIR *directory = opendir("/proc/self/fd");
+  if (directory == nullptr) {
+    return std::nullopt;
+  }
+  std::optional<int> flags;
+  while (dirent *entry = readdir(directory)) {
+    std::string link = std::string("/proc/self/fd/") + entry->d_name;
+    char target[PATH_MAX];
+    ssize_t length = readlink(link.c_str(), target, sizeof(target) - 1);
+    if (length > 0 && std::string(target, length) == resolved) {
+      flags = fcntl(std::atoi(entry->d_name), F_GETFL);
+      break;
+    }
+  }
+  closedir(directory);
+  return flags;
+}
 
 class ServerTest
     : public ::testing::TestWithParam<std::tuple<WioBackend, bool>> {
@@ -375,6 +403,12 @@ TEST_P(ServerTest, ClientMayLeaveWithRequestsInFlight) {
   EXPECT_EQ(other.read_response().res, 4096);
 }
 
+TEST_P(ServerTest, FileIsNotOpenedWithODirectUnlessAsked) {
+  std::optional<int> flags = open_flags_of(_path);
+  ASSERT_TRUE(flags.has_value());
+  EXPECT_EQ(*flags & O_DIRECT, 0);
+}
+
 TEST_P(ServerTest, UnknownFlagEndsTheConnection) {
   Client client(_port);
   std::vector<char> data = pattern(4096, 4);
@@ -436,7 +470,7 @@ INSTANTIATE_TEST_SUITE_P(
       return name + (std::get<1>(info.param) ? "_multishot" : "_single");
     });
 
-TEST(ServerDirectIo, MisalignedRequestsFailWithEinval) {
+TEST(ServerDirectIo, FileIsOpenedWithODirectAndServedAligned) {
   char path[] = "./wheelie-test-XXXXXX";
   int fd = mkstemp(path);
   ASSERT_GE(fd, 0);
@@ -457,16 +491,22 @@ TEST(ServerDirectIo, MisalignedRequestsFailWithEinval) {
     GTEST_SKIP() << "no O_DIRECT here: " << e.what();
   }
 
+  std::optional<int> flags = open_flags_of(path);
+  ASSERT_TRUE(flags.has_value());
+  EXPECT_NE(*flags & O_DIRECT, 0);
+
+  // What the file system makes of a request that is not aligned is its own
+  // business, so only aligned ones are tried: the buffers the server hands
+  // over have to be aligned too, or the kernel refuses them.
   Client client(port);
-  std::vector<char> aligned = pattern(4096, 1);
-  client.send_request(1, WHEELIE_OP_WRITE, 4096, 4096, aligned);
-  EXPECT_EQ(client.read_response().res, 4096);
+  std::vector<char> data = pattern(8192, 1);
+  client.send_request(1, WHEELIE_OP_WRITE, 4096, data.size(), data,
+                      WHEELIE_FLAG_SYNC);
+  EXPECT_EQ(client.read_response().res, 8192);
 
-  std::vector<char> odd = pattern(100, 2);
-  client.send_request(2, WHEELIE_OP_WRITE, 4096, 100, odd);
-  EXPECT_EQ(client.read_response().res, -EINVAL);
-
-  client.send_request(3, WHEELIE_OP_READ, 4096, 4096);
-  EXPECT_EQ(client.read_response().data, aligned);
+  client.send_request(2, WHEELIE_OP_READ, 4096, 8192);
+  Client::Response read = client.read_response();
+  EXPECT_EQ(read.res, 8192);
+  EXPECT_EQ(read.data, data);
   ::unlink(path);
 }
