@@ -1,4 +1,4 @@
-#include "queue.h"
+#include "reactor.h"
 
 #include <errno.h>
 #include <stdlib.h>
@@ -19,10 +19,10 @@
 #define MAX_CQ_ENTRIES 65536u
 
 typedef struct {
-  WioQueue base;
+  WioReactor base;
   struct io_uring ring;
   uint64_t bgid_used[BGID_COUNT / 64];
-} UringQueue;
+} UringReactor;
 
 /* Provided-buffer ring of one multishot receive: the descriptors the kernel
  * picks buffers from, followed by the buffers themselves, in one mapping. */
@@ -37,38 +37,40 @@ typedef struct {
   unsigned short bgid;
 } RecvRing;
 
-static UringQueue *uring_queue(WioQueue *queue) { return (UringQueue *)queue; }
+static UringReactor *uring_reactor(WioReactor *reactor) {
+  return (UringReactor *)reactor;
+}
 
-static int bgid_alloc(UringQueue *queue) {
+static int bgid_alloc(UringReactor *reactor) {
   for (unsigned int word = 0; word < BGID_COUNT / 64; ++word) {
-    uint64_t free_bits = ~queue->bgid_used[word];
+    uint64_t free_bits = ~reactor->bgid_used[word];
     if (free_bits != 0) {
       unsigned int bit = (unsigned int)__builtin_ctzll(free_bits);
-      queue->bgid_used[word] |= UINT64_C(1) << bit;
+      reactor->bgid_used[word] |= UINT64_C(1) << bit;
       return (int)(word * 64 + bit);
     }
   }
   return -ENOSPC;
 }
 
-static void bgid_free(UringQueue *queue, unsigned short bgid) {
-  queue->bgid_used[bgid / 64] &= ~(UINT64_C(1) << (bgid % 64));
+static void bgid_free(UringReactor *reactor, unsigned short bgid) {
+  reactor->bgid_used[bgid / 64] &= ~(UINT64_C(1) << (bgid % 64));
 }
 
-static struct io_uring_sqe *get_sqe(UringQueue *queue) {
-  struct io_uring_sqe *sqe = io_uring_get_sqe(&queue->ring);
+static struct io_uring_sqe *get_sqe(UringReactor *reactor) {
+  struct io_uring_sqe *sqe = io_uring_get_sqe(&reactor->ring);
   if (sqe != NULL) {
     return sqe;
   }
   /* The SQ ring is full of operations not yet handed to the kernel: hand
    * them over to make room. */
-  if (io_uring_submit(&queue->ring) < 0) {
+  if (io_uring_submit(&reactor->ring) < 0) {
     return NULL;
   }
-  return io_uring_get_sqe(&queue->ring);
+  return io_uring_get_sqe(&reactor->ring);
 }
 
-static int recv_ring_create(UringQueue *queue, WioOp *op) {
+static int recv_ring_create(UringReactor *reactor, WioOp *op) {
   size_t entry_size = op->_u._recv_ms.entry_size;
   unsigned int entries = op->_u._recv_ms.entries;
 
@@ -77,7 +79,7 @@ static int recv_ring_create(UringQueue *queue, WioOp *op) {
     return -ENOMEM;
   }
 
-  int bgid = bgid_alloc(queue);
+  int bgid = bgid_alloc(reactor);
   if (bgid < 0) {
     free(recv_ring);
     return bgid;
@@ -92,7 +94,7 @@ static int recv_ring_create(UringQueue *queue, WioOp *op) {
                         MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
   if (recv_ring->map == MAP_FAILED) {
     int ret = -errno;
-    bgid_free(queue, (unsigned short)bgid);
+    bgid_free(reactor, (unsigned short)bgid);
     free(recv_ring);
     return ret;
   }
@@ -109,10 +111,10 @@ static int recv_ring_create(UringQueue *queue, WioOp *op) {
   reg.ring_addr = (uint64_t)(uintptr_t)recv_ring->ring;
   reg.ring_entries = entries;
   reg.bgid = recv_ring->bgid;
-  int ret = io_uring_register_buf_ring(&queue->ring, &reg, 0);
+  int ret = io_uring_register_buf_ring(&reactor->ring, &reg, 0);
   if (ret < 0) {
     munmap(recv_ring->map, recv_ring->map_len);
-    bgid_free(queue, recv_ring->bgid);
+    bgid_free(reactor, recv_ring->bgid);
     free(recv_ring);
     return ret;
   }
@@ -128,19 +130,19 @@ static int recv_ring_create(UringQueue *queue, WioOp *op) {
   return 0;
 }
 
-static void recv_ring_destroy(UringQueue *queue, WioOp *op) {
+static void recv_ring_destroy(UringReactor *reactor, WioOp *op) {
   RecvRing *recv_ring = op->_backend;
-  io_uring_unregister_buf_ring(&queue->ring, recv_ring->bgid);
+  io_uring_unregister_buf_ring(&reactor->ring, recv_ring->bgid);
   munmap(recv_ring->map, recv_ring->map_len);
-  bgid_free(queue, recv_ring->bgid);
+  bgid_free(reactor, recv_ring->bgid);
   free(recv_ring);
   op->_backend = NULL;
 }
 
 /* Puts the receive of a multishot operation into the SQ ring. */
-static int arm_recv(UringQueue *queue, WioOp *op) {
+static int arm_recv(UringReactor *reactor, WioOp *op) {
   RecvRing *recv_ring = op->_backend;
-  struct io_uring_sqe *sqe = get_sqe(queue);
+  struct io_uring_sqe *sqe = get_sqe(reactor);
   if (sqe == NULL) {
     return -EBUSY;
   }
@@ -151,22 +153,22 @@ static int arm_recv(UringQueue *queue, WioOp *op) {
   return 0;
 }
 
-static int uring_submit(WioQueue *base, WioOp *op) {
-  UringQueue *queue = uring_queue(base);
+static int uring_submit(WioReactor *base, WioOp *op) {
+  UringReactor *reactor = uring_reactor(base);
 
   if (op->_kind == WIO_KIND_RECV_MULTISHOT) {
-    int ret = recv_ring_create(queue, op);
+    int ret = recv_ring_create(reactor, op);
     if (ret < 0) {
       return ret;
     }
-    ret = arm_recv(queue, op);
+    ret = arm_recv(reactor, op);
     if (ret < 0) {
-      recv_ring_destroy(queue, op);
+      recv_ring_destroy(reactor, op);
     }
     return ret;
   }
 
-  struct io_uring_sqe *sqe = get_sqe(queue);
+  struct io_uring_sqe *sqe = get_sqe(reactor);
   if (sqe == NULL) {
     return -EBUSY;
   }
@@ -213,9 +215,9 @@ static int uring_submit(WioQueue *base, WioOp *op) {
   return 0;
 }
 
-static int uring_cancel(WioQueue *base, WioOp *target) {
-  UringQueue *queue = uring_queue(base);
-  struct io_uring_sqe *sqe = get_sqe(queue);
+static int uring_cancel(WioReactor *base, WioOp *target) {
+  UringReactor *reactor = uring_reactor(base);
+  struct io_uring_sqe *sqe = get_sqe(reactor);
   if (sqe == NULL) {
     return -EBUSY;
   }
@@ -227,9 +229,9 @@ static int uring_cancel(WioQueue *base, WioOp *target) {
   return 0;
 }
 
-static int uring_cancel_fd(WioQueue *base, int fd) {
-  UringQueue *queue = uring_queue(base);
-  struct io_uring_sqe *sqe = get_sqe(queue);
+static int uring_cancel_fd(WioReactor *base, int fd) {
+  UringReactor *reactor = uring_reactor(base);
+  struct io_uring_sqe *sqe = get_sqe(reactor);
   if (sqe == NULL) {
     return -EBUSY;
   }
@@ -240,12 +242,12 @@ static int uring_cancel_fd(WioQueue *base, int fd) {
 
 /* Finishes a multishot receive: its ring goes away before the callback,
  * which is free to release the operation. */
-static void recv_finish(UringQueue *queue, WioOp *op, int result) {
-  recv_ring_destroy(queue, op);
-  wio_queue_complete_recv(op, NULL, result, 0);
+static void recv_finish(UringReactor *reactor, WioOp *op, int result) {
+  recv_ring_destroy(reactor, op);
+  wio_reactor_complete_recv(op, NULL, result, 0);
 }
 
-static int complete_recv_multishot(UringQueue *queue, WioOp *op, int res,
+static int complete_recv_multishot(UringReactor *reactor, WioOp *op, int res,
                                    unsigned int cqe_flags) {
   RecvRing *recv_ring = op->_backend;
   bool armed = cqe_flags & IORING_CQE_F_MORE;
@@ -254,7 +256,7 @@ static int complete_recv_multishot(UringQueue *queue, WioOp *op, int res,
   if (res > 0 && (cqe_flags & IORING_CQE_F_BUFFER)) {
     unsigned int bid = cqe_flags >> IORING_CQE_BUFFER_SHIFT;
     const char *data = recv_ring->data + (size_t)bid * recv_ring->entry_size;
-    wio_queue_complete_recv(op, data, res, WIO_F_MORE);
+    wio_reactor_complete_recv(op, data, res, WIO_F_MORE);
     callbacks = 1;
     io_uring_buf_ring_add(recv_ring->ring, (void *)data,
                           (unsigned int)recv_ring->entry_size,
@@ -264,76 +266,76 @@ static int complete_recv_multishot(UringQueue *queue, WioOp *op, int res,
     /* The kernel ran out of buffers and ended the receive; the buffers of
      * the completions already seen are back in the ring by now. */
   } else {
-    recv_finish(queue, op, res);
+    recv_finish(reactor, op, res);
     return 1;
   }
 
   if (!armed) {
     if (op->_cancelled) {
-      recv_finish(queue, op, -ECANCELED);
+      recv_finish(reactor, op, -ECANCELED);
       return callbacks + 1;
     }
-    int ret = arm_recv(queue, op);
+    int ret = arm_recv(reactor, op);
     if (ret < 0) {
-      recv_finish(queue, op, ret);
+      recv_finish(reactor, op, ret);
       return callbacks + 1;
     }
   }
   return callbacks;
 }
 
-static int dispatch(UringQueue *queue) {
+static int dispatch(UringReactor *reactor) {
   unsigned int head;
   unsigned int seen = 0;
   int callbacks = 0;
   struct io_uring_cqe *cqe;
 
-  io_uring_for_each_cqe(&queue->ring, head, cqe) {
+  io_uring_for_each_cqe(&reactor->ring, head, cqe) {
     ++seen;
     WioOp *op = io_uring_cqe_get_data(cqe);
     if (op == NULL) {
       continue;
     }
     if (op->_kind == WIO_KIND_RECV_MULTISHOT) {
-      callbacks += complete_recv_multishot(queue, op, cqe->res, cqe->flags);
+      callbacks += complete_recv_multishot(reactor, op, cqe->res, cqe->flags);
     } else {
-      wio_queue_complete(op, cqe->res, 0);
+      wio_reactor_complete(op, cqe->res, 0);
       ++callbacks;
     }
   }
-  io_uring_cq_advance(&queue->ring, seen);
+  io_uring_cq_advance(&reactor->ring, seen);
   return callbacks;
 }
 
-static int uring_wait(WioQueue *base, int timeout_ms) {
-  UringQueue *queue = uring_queue(base);
+static int uring_wait(WioReactor *base, int timeout_ms) {
+  UringReactor *reactor = uring_reactor(base);
   int ret;
 
   if (timeout_ms < 0) {
-    ret = io_uring_submit_and_wait(&queue->ring, 1);
+    ret = io_uring_submit_and_wait(&reactor->ring, 1);
   } else if (timeout_ms == 0) {
-    ret = io_uring_submit_and_get_events(&queue->ring);
+    ret = io_uring_submit_and_get_events(&reactor->ring);
   } else {
     struct io_uring_cqe *cqe;
     struct __kernel_timespec ts = {
         .tv_sec = timeout_ms / 1000,
         .tv_nsec = (long long)(timeout_ms % 1000) * 1000000,
     };
-    ret = io_uring_submit_and_wait_timeout(&queue->ring, &cqe, 1, &ts, NULL);
+    ret = io_uring_submit_and_wait_timeout(&reactor->ring, &cqe, 1, &ts, NULL);
   }
   if (ret < 0 && ret != -ETIME && ret != -EINTR) {
     return ret;
   }
-  return dispatch(queue);
+  return dispatch(reactor);
 }
 
-static void uring_destroy(WioQueue *base) {
-  UringQueue *queue = uring_queue(base);
-  io_uring_queue_exit(&queue->ring);
-  free(queue);
+static void uring_destroy(WioReactor *base) {
+  UringReactor *reactor = uring_reactor(base);
+  io_uring_queue_exit(&reactor->ring);
+  free(reactor);
 }
 
-static const WioQueueOps uring_ops = {
+static const WioReactorOps uring_ops = {
     .destroy = uring_destroy,
     .submit = uring_submit,
     .cancel = uring_cancel,
@@ -341,13 +343,13 @@ static const WioQueueOps uring_ops = {
     .wait = uring_wait,
 };
 
-int wio_uring_queue_create(unsigned int depth, WioQueue **out) {
+int wio_uring_reactor_create(unsigned int depth, WioReactor **out) {
   if (depth > MAX_SQ_ENTRIES) {
     return -EINVAL;
   }
 
-  UringQueue *queue = calloc(1, sizeof(*queue));
-  if (queue == NULL) {
+  UringReactor *reactor = calloc(1, sizeof(*reactor));
+  if (reactor == NULL) {
     return -ENOMEM;
   }
 
@@ -361,14 +363,14 @@ int wio_uring_queue_create(unsigned int depth, WioQueue **out) {
   if (params.cq_entries > MAX_CQ_ENTRIES) {
     params.cq_entries = MAX_CQ_ENTRIES;
   }
-  int ret = io_uring_queue_init_params(depth, &queue->ring, &params);
+  int ret = io_uring_queue_init_params(depth, &reactor->ring, &params);
   if (ret < 0) {
-    free(queue);
+    free(reactor);
     return ret;
   }
 
-  queue->base.ops = &uring_ops;
-  queue->base.depth = depth;
-  *out = &queue->base;
+  reactor->base.ops = &uring_ops;
+  reactor->base.depth = depth;
+  *out = &reactor->base;
   return 0;
 }

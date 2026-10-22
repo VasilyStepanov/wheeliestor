@@ -10,7 +10,7 @@ wheelie ioengine, built from `3rdparty/`.
 
 The compared mechanisms are the three backends of `wheelio/`: plain libc,
 alibc (libc with a worker-thread pool for disk I/O), and io_uring
-(optionally with multishot recv). Everything above the queue is written
+(optionally with multishot recv). Everything above the reactor is written
 once, so a backend is the only thing that differs between two benchmark
 runs. See
 `docs/design.md`.
@@ -19,7 +19,7 @@ runs. See
 
 ```
 wheeliestor/
-├── wheelio/          completion-style I/O queue in C, one backend per mechanism
+├── wheelio/          completion-style I/O reactor in C, one backend per mechanism
 │   ├── include/wheelio/  public header
 │   ├── src/              implementation + private headers (noinst .la)
 │   └── tests/            GoogleTest suite (test_all)
