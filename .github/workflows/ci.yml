@@ -61,3 +61,16 @@ jobs:
       env:
         FIO: ${{ github.workspace }}/3rdparty/fio/fio
         WHEELIE_FIO_REQUIRED: 1
+
+  docker:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        submodules: true
+    # The images of the stand build the project and fio from source: this only
+    # checks that they build.
+    - name: build the images
+      run: docker compose build
