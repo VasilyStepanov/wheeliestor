@@ -7,11 +7,15 @@
 ## Сборка
 
 ```
+git submodule update --init --depth 1
 ./autogen.sh
 ./configure --prefix=$PWD/.install
 make -j$(nproc)
 make test
 ```
+
+Движок для fio (`fio/.libs/wheelie.so`) собирается против исходников fio из
+подмодуля `3rdparty/fio`; подробности в [docs/fio.md](docs/fio.md).
 
 Нужны компилятор C/C++20, autotools, libtool, pkg-config, liburing >= 2.3 и
 GoogleTest.

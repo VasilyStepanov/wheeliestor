@@ -1,0 +1,4 @@
+[submodule "3rdparty/fio"]
+	path = 3rdparty/fio
+	url = https://github.com/axboe/fio.git
+	shallow = true

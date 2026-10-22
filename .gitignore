@@ -34,3 +34,5 @@ Makefile.in
 test_all
 /.install/
 wheelie-server
+fio-config/
+FIO-VERSION-FILE

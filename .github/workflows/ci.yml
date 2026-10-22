@@ -40,11 +40,24 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y libtool liburing-dev libgtest-dev
     - uses: actions/checkout@v7
+      with:
+        submodules: true
     - name: autogen
       run: ./autogen.sh
     - name: configure
       run: ./configure --enable-asan
     - name: make
       run: make -j$(nproc)
+    # The engine can only be loaded by the fio it is built for, so fio is built
+    # from the same source, after the engine: fio's configure runs in the
+    # source tree here, and the engine is built against a clean one.
+    - name: build fio
+      run: |
+        cd 3rdparty/fio
+        ./configure
+        make -j$(nproc)
     - name: make test
       run: make test
+      env:
+        FIO: ${{ github.workspace }}/3rdparty/fio/fio
+        WHEELIE_FIO_REQUIRED: 1
