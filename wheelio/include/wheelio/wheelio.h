@@ -139,6 +139,7 @@ struct WioOp {
   size_t _size;
   uint64_t _offset;
   unsigned int _flags;
+  bool _cancelled;
   union {
     struct {
       socklen_t *addrlen;
@@ -189,8 +190,9 @@ unsigned int wio_queue_inflight(const WioQueue *queue);
  *                   what has already completed, -1 to wait until something
  *                   completes.
  *
- * @return Number of callbacks run, 0 if the timeout expired first, or
- *         -errno on failure.
+ * @return Number of callbacks run, 0 if the timeout expired first or nothing
+ *         is in flight (nothing could ever complete, so it does not wait),
+ *         or -errno on failure.
  */
 int wio_wait(WioQueue *queue, int timeout_ms);
 
@@ -218,19 +220,25 @@ int wio_recv(WioQueue *queue, WioOp *op, int fd, void *buf, size_t size,
  * resubmission per chunk. The queue owns the receive buffers: it takes
  * `entries` buffers of `entry_size` bytes, hands each received chunk to `cb`
  * and takes the buffer back when `cb` returns. A chunk is at most
- * `entry_size` bytes.
+ * `entry_size` bytes. When the buffers run out the queue re-arms the receive
+ * by itself and chunks keep coming.
+ *
+ * @param entries Number of buffers; a power of two, at most 32768.
  */
 int wio_recv_multishot(WioQueue *queue, WioOp *op, int fd, size_t entry_size,
                        unsigned int entries, unsigned int flags,
                        WioRecvCallback cb);
 
-/** `buf` must stay valid until the callback. */
+/**
+ * MSG_NOSIGNAL is always added to `flags`. `buf` must stay valid until the
+ * callback.
+ */
 int wio_send(WioQueue *queue, WioOp *op, int fd, const void *buf, size_t size,
              unsigned int flags, WioCallback cb);
 
 /**
- * Gathered send. `msg` and everything it points to must stay valid until the
- * callback.
+ * Gathered send. MSG_NOSIGNAL is always added to `flags`. `msg` and
+ * everything it points to must stay valid until the callback.
  */
 int wio_sendmsg(WioQueue *queue, WioOp *op, int fd, const struct msghdr *msg,
                 unsigned int flags, WioCallback cb);
