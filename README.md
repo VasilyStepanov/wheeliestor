@@ -1,6 +1,6 @@
 # wheeliestor
 
-Стенд для воркшопа: сравнение libc и io_uring как механизмов ввода-вывода
+Стенд для сравнения libc и io_uring как механизмов ввода-вывода
 клиент-серверного приложения, которое передаёт данные по TCP и хранит их на
 диске. Подробности в [docs/design.md](docs/design.md).
 
@@ -13,6 +13,9 @@ git submodule update --init --depth 1
 make -j$(nproc)
 make test
 ```
+
+Стенд из двух контейнеров и скрипт замеров `bench/run.sh` описаны в
+[docs/bench.md](docs/bench.md).
 
 Движок для fio (`fio/.libs/wheelie.so`) собирается против исходников fio из
 подмодуля `3rdparty/fio`; подробности в [docs/fio.md](docs/fio.md).

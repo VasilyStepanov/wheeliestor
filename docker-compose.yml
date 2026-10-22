@@ -1,0 +1,51 @@
+# The stand: the server and the client in two containers on one network, so
+# that the requests cross a real network stack, and the server's file is on a
+# volume, so that it is a real file on a real disk.
+#
+# Run it with bench/run.sh, which gives the server the variant to test.
+
+x-wheelie: &wheelie
+  # Docker's default seccomp profile does not let io_uring's system calls
+  # through: without this the io_uring backend cannot even start.
+  security_opt:
+    - seccomp:unconfined
+
+services:
+  server:
+    <<: *wheelie
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: server
+    image: wheeliestor-server
+    environment:
+      WHEELIE_BACKEND: ${WHEELIE_BACKEND:-uring}
+      WHEELIE_MULTISHOT: ${WHEELIE_MULTISHOT:-0}
+      WHEELIE_THREADS: ${WHEELIE_THREADS:-}
+      WHEELIE_QUEUE_DEPTH: ${WHEELIE_QUEUE_DEPTH:-}
+      WHEELIE_DIRECT: ${WHEELIE_DIRECT:-1}
+      WHEELIE_FILE_SIZE_MB: ${WHEELIE_FILE_SIZE_MB:-2048}
+    volumes:
+      - data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/39900'"]
+      interval: 1s
+      timeout: 2s
+      retries: 120
+      start_period: 1s
+
+  client:
+    <<: *wheelie
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: client
+    image: wheeliestor-client
+    depends_on:
+      server:
+        condition: service_healthy
+    volumes:
+      - ./results:/results
+
+volumes:
+  data:
