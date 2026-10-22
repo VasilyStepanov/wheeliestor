@@ -45,7 +45,7 @@ services:
       server:
         condition: service_healthy
     volumes:
-      - ./results:/results
+      - ${WHEELIE_RESULTS:-./results}:/results
 
 volumes:
   data:

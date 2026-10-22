@@ -133,9 +133,12 @@ int main(int argc, char **argv) {
 
     wheelie::Server server(config);
     uint16_t port = server.start();
-    std::fprintf(stderr, "wheelie-server: listening on %s:%u (%s%s, %u)\n",
+    std::fprintf(stderr,
+                 "wheelie-server: listening on %s:%u (%s%s, %u threads, queue "
+                 "depth %u, %s)\n",
                  config.host.c_str(), port, wio_backend_name(config.backend),
-                 config.multishot ? " multishot" : "", config.threads);
+                 config.multishot ? " multishot" : "", config.threads,
+                 config.queue_depth, config.direct ? "O_DIRECT" : "buffered");
 
     int signal_number = 0;
     sigwait(&signals, &signal_number);
