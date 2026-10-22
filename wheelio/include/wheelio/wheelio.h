@@ -133,7 +133,7 @@ struct WioOp {
     WioRecvCallback recv;
   } _cb;
   WioReactor *_reactor;
-  unsigned int _kind;
+  unsigned int _opcode;
   int _fd;
   void *_ptr;
   size_t _size;

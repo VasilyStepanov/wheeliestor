@@ -156,7 +156,7 @@ static int arm_recv(UringReactor *reactor, WioOp *op) {
 static int uring_submit(WioReactor *base, WioOp *op) {
   UringReactor *reactor = uring_reactor(base);
 
-  if (op->_kind == WIO_KIND_RECV_MULTISHOT) {
+  if (op->_opcode == WIO_OP_RECV_MULTISHOT) {
     int ret = recv_ring_create(reactor, op);
     if (ret < 0) {
       return ret;
@@ -173,39 +173,39 @@ static int uring_submit(WioReactor *base, WioOp *op) {
     return -EBUSY;
   }
 
-  switch (op->_kind) {
-  case WIO_KIND_ACCEPT:
+  switch (op->_opcode) {
+  case WIO_OP_ACCEPT:
     io_uring_prep_accept(sqe, op->_fd, op->_ptr, op->_u._accept.addrlen,
                          SOCK_CLOEXEC);
     break;
-  case WIO_KIND_CONNECT:
+  case WIO_OP_CONNECT:
     io_uring_prep_connect(sqe, op->_fd, op->_ptr, (socklen_t)op->_size);
     break;
-  case WIO_KIND_CLOSE:
+  case WIO_OP_CLOSE:
     io_uring_prep_close(sqe, op->_fd);
     break;
-  case WIO_KIND_RECV:
+  case WIO_OP_RECV:
     io_uring_prep_recv(sqe, op->_fd, op->_ptr, op->_size, (int)op->_flags);
     break;
-  case WIO_KIND_SEND:
+  case WIO_OP_SEND:
     io_uring_prep_send(sqe, op->_fd, op->_ptr, op->_size,
                        (int)op->_flags | MSG_NOSIGNAL);
     break;
-  case WIO_KIND_SENDMSG:
+  case WIO_OP_SENDMSG:
     io_uring_prep_sendmsg(sqe, op->_fd, op->_ptr, op->_flags | MSG_NOSIGNAL);
     break;
-  case WIO_KIND_PREAD:
+  case WIO_OP_PREAD:
     io_uring_prep_read(sqe, op->_fd, op->_ptr, (unsigned int)op->_size,
                        op->_offset);
     break;
-  case WIO_KIND_PWRITE:
+  case WIO_OP_PWRITE:
     io_uring_prep_write(sqe, op->_fd, op->_ptr, (unsigned int)op->_size,
                         op->_offset);
     if (op->_flags & WIO_WRITE_DSYNC) {
       sqe->rw_flags |= RWF_DSYNC;
     }
     break;
-  case WIO_KIND_FSYNC:
+  case WIO_OP_FSYNC:
     io_uring_prep_fsync(sqe, op->_fd, op->_flags ? IORING_FSYNC_DATASYNC : 0);
     break;
   default:
@@ -296,7 +296,7 @@ static int dispatch(UringReactor *reactor) {
     if (op == NULL) {
       continue;
     }
-    if (op->_kind == WIO_KIND_RECV_MULTISHOT) {
+    if (op->_opcode == WIO_OP_RECV_MULTISHOT) {
       callbacks += complete_recv_multishot(reactor, op, cqe->res, cqe->flags);
     } else {
       wio_reactor_complete(op, cqe->res, 0);

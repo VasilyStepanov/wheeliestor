@@ -3,18 +3,18 @@
 
 #include <wheelio/wheelio.h>
 
-/* What an operation asks for; stored in WioOp::_kind. */
+/* Which operation a WioOp asks for; stored in WioOp::_opcode. */
 enum {
-  WIO_KIND_ACCEPT = 1,
-  WIO_KIND_CONNECT,
-  WIO_KIND_CLOSE,
-  WIO_KIND_RECV,
-  WIO_KIND_RECV_MULTISHOT,
-  WIO_KIND_SEND,
-  WIO_KIND_SENDMSG,
-  WIO_KIND_PREAD,
-  WIO_KIND_PWRITE,
-  WIO_KIND_FSYNC,
+  WIO_OP_ACCEPT = 1,
+  WIO_OP_CONNECT,
+  WIO_OP_CLOSE,
+  WIO_OP_RECV,
+  WIO_OP_RECV_MULTISHOT,
+  WIO_OP_SEND,
+  WIO_OP_SENDMSG,
+  WIO_OP_PREAD,
+  WIO_OP_PWRITE,
+  WIO_OP_FSYNC,
 };
 
 #define WIO_RECV_MAX_ENTRIES 32768u

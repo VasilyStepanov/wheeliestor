@@ -51,14 +51,14 @@ void wio_reactor_complete_recv(WioOp *op, const void *data, int result,
   op->_cb.recv(op, data, result, flags);
 }
 
-/* Clears `op` for a new request of `kind`. */
-static int begin(WioReactor *reactor, WioOp *op, unsigned int kind) {
+/* Clears `op` for a new request with `opcode`. */
+static int begin(WioReactor *reactor, WioOp *op, unsigned int opcode) {
   if (reactor->inflight >= reactor->depth) {
     return -EBUSY;
   }
   memset(op, 0, sizeof(*op));
   op->_reactor = reactor;
-  op->_kind = kind;
+  op->_opcode = opcode;
   return 0;
 }
 
@@ -75,7 +75,7 @@ static bool fits_result(size_t size) { return size <= INT_MAX; }
 
 int wio_accept(WioReactor *reactor, WioOp *op, int fd, struct sockaddr *addr,
                socklen_t *addrlen, WioCallback cb) {
-  int ret = begin(reactor, op, WIO_KIND_ACCEPT);
+  int ret = begin(reactor, op, WIO_OP_ACCEPT);
   if (ret < 0) {
     return ret;
   }
@@ -89,7 +89,7 @@ int wio_accept(WioReactor *reactor, WioOp *op, int fd, struct sockaddr *addr,
 int wio_connect(WioReactor *reactor, WioOp *op, int fd,
                 const struct sockaddr *addr, socklen_t addrlen,
                 WioCallback cb) {
-  int ret = begin(reactor, op, WIO_KIND_CONNECT);
+  int ret = begin(reactor, op, WIO_OP_CONNECT);
   if (ret < 0) {
     return ret;
   }
@@ -101,7 +101,7 @@ int wio_connect(WioReactor *reactor, WioOp *op, int fd,
 }
 
 int wio_close(WioReactor *reactor, WioOp *op, int fd, WioCallback cb) {
-  int ret = begin(reactor, op, WIO_KIND_CLOSE);
+  int ret = begin(reactor, op, WIO_OP_CLOSE);
   if (ret < 0) {
     return ret;
   }
@@ -115,7 +115,7 @@ int wio_recv(WioReactor *reactor, WioOp *op, int fd, void *buf, size_t size,
   if (!fits_result(size)) {
     return -EINVAL;
   }
-  int ret = begin(reactor, op, WIO_KIND_RECV);
+  int ret = begin(reactor, op, WIO_OP_RECV);
   if (ret < 0) {
     return ret;
   }
@@ -134,7 +134,7 @@ int wio_recv_multishot(WioReactor *reactor, WioOp *op, int fd,
       entries > WIO_RECV_MAX_ENTRIES || (entries & (entries - 1)) != 0) {
     return -EINVAL;
   }
-  int ret = begin(reactor, op, WIO_KIND_RECV_MULTISHOT);
+  int ret = begin(reactor, op, WIO_OP_RECV_MULTISHOT);
   if (ret < 0) {
     return ret;
   }
@@ -151,7 +151,7 @@ int wio_send(WioReactor *reactor, WioOp *op, int fd, const void *buf,
   if (!fits_result(size)) {
     return -EINVAL;
   }
-  int ret = begin(reactor, op, WIO_KIND_SEND);
+  int ret = begin(reactor, op, WIO_OP_SEND);
   if (ret < 0) {
     return ret;
   }
@@ -165,7 +165,7 @@ int wio_send(WioReactor *reactor, WioOp *op, int fd, const void *buf,
 
 int wio_sendmsg(WioReactor *reactor, WioOp *op, int fd,
                 const struct msghdr *msg, unsigned int flags, WioCallback cb) {
-  int ret = begin(reactor, op, WIO_KIND_SENDMSG);
+  int ret = begin(reactor, op, WIO_OP_SENDMSG);
   if (ret < 0) {
     return ret;
   }
@@ -181,7 +181,7 @@ int wio_pread(WioReactor *reactor, WioOp *op, int fd, void *buf, size_t size,
   if (!fits_result(size)) {
     return -EINVAL;
   }
-  int ret = begin(reactor, op, WIO_KIND_PREAD);
+  int ret = begin(reactor, op, WIO_OP_PREAD);
   if (ret < 0) {
     return ret;
   }
@@ -199,7 +199,7 @@ int wio_pwrite(WioReactor *reactor, WioOp *op, int fd, const void *buf,
   if (!fits_result(size)) {
     return -EINVAL;
   }
-  int ret = begin(reactor, op, WIO_KIND_PWRITE);
+  int ret = begin(reactor, op, WIO_OP_PWRITE);
   if (ret < 0) {
     return ret;
   }
@@ -214,7 +214,7 @@ int wio_pwrite(WioReactor *reactor, WioOp *op, int fd, const void *buf,
 
 int wio_fsync(WioReactor *reactor, WioOp *op, int fd, bool datasync,
               WioCallback cb) {
-  int ret = begin(reactor, op, WIO_KIND_FSYNC);
+  int ret = begin(reactor, op, WIO_OP_FSYNC);
   if (ret < 0) {
     return ret;
   }
