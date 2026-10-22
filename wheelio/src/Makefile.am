@@ -13,6 +13,7 @@ libwheelio_la_SOURCES = $(top_srcdir)/wheelio/include/wheelio/wheelio.h \
                         backend.c \
                         reactor.c \
                         reactor.h \
+                        libc.c \
                         uring.c
 
 libwheelio_la_LIBADD = $(LIBURING_LIBS)

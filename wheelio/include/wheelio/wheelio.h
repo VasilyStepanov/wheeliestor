@@ -135,6 +135,22 @@ struct WioOp {
   WioReactor *_reactor;
   bool _cancelled;
   void *_backend;
+  /* State of the poll()-based backends: the request to run once its
+   * descriptor is ready, and where the operation is in the reactor. */
+  struct {
+    WioOp *next;
+    WioOp *prev;
+    unsigned int list;
+    unsigned int opcode;
+    int fd;
+    short events;
+    unsigned int flags;
+    int result;
+    void *ptr;
+    void *aux;
+    size_t size;
+    uint64_t offset;
+  } _poll;
 };
 
 /**
@@ -181,6 +197,8 @@ unsigned int wio_reactor_inflight(const WioReactor *reactor);
 int wio_wait(WioReactor *reactor, int timeout_ms);
 
 /**
+ * The libc backends make `fd` nonblocking.
+ *
  * @param addr    Receives the peer address, may be NULL. Must stay valid
  *                until the callback.
  * @param addrlen In/out size of `addr`; NULL iff `addr` is NULL.
@@ -188,7 +206,10 @@ int wio_wait(WioReactor *reactor, int timeout_ms);
 int wio_accept(WioReactor *reactor, WioOp *op, int fd, struct sockaddr *addr,
                socklen_t *addrlen, WioCallback cb);
 
-/** `addr` must stay valid until the callback. */
+/**
+ * The libc backends make `fd` nonblocking. `addr` must stay valid until the
+ * callback.
+ */
 int wio_connect(WioReactor *reactor, WioOp *op, int fd,
                 const struct sockaddr *addr, socklen_t addrlen, WioCallback cb);
 
