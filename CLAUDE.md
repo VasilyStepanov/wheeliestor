@@ -80,6 +80,9 @@ CI (`.github/workflows/ci.yml`) runs on every push: a `linter` job
   functions are prefixed `wio_`.
 - Documents (`README.md`, `docs/`, the talk) are written in Russian. This
   guide, code comments, identifiers and commit messages stay in English.
+- Diagrams in Markdown are Mermaid blocks (`flowchart`, `sequenceDiagram`,
+  `stateDiagram-v2`); byte layouts of the wire protocol are `text` blocks with
+  an offset ruler. Check that a Mermaid block parses before committing it.
 - No historical notes in new code comments: describe only the current shape
   and its current rationale. What a thing used to be belongs in the commit
   message.

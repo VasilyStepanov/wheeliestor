@@ -8,8 +8,12 @@
 
 ## Конвейер
 
-```
-fio -> wheelie engine -> клиентская библиотека -> протокол -> сервер -> хранилище
+```mermaid
+flowchart LR
+    fio["fio"] --> engine["движок wheelie"]
+    engine --> client["клиентская библиотека"]
+    client -- "протокол wheelie по TCP" --> server["wheelie-server"]
+    server --> storage[("файл или блочное устройство")]
 ```
 
 Клиент и сервер пишутся один раз поверх реактора `wheelio`; бэкенд выбирается
@@ -22,6 +26,17 @@ fio -> wheelie engine -> клиентская библиотека -> прото
 Бэкенды на libc её эмулируют, из-за чего в коде видна разница между
 готовностью (`poll()` говорит, что из fd *можно* читать) и завершением
 (операция *уже выполнена*).
+
+Где реактор стоит и что под ним:
+
+```mermaid
+flowchart TB
+    app["сервер и клиент: корутины"] --> coro["wheelio: Task, Operation, RecvStream"]
+    coro --> reactor["WioReactor: wio_recv, wio_pwrite, wio_wait и остальные"]
+    reactor --> libc["libc: poll и неблокирующие сокеты, диск в самом цикле"]
+    reactor --> alibc["alibc: то же, но диск в пуле из четырёх потоков"]
+    reactor --> uring["uring: io_uring"]
+```
 
 Бэкенды:
 
@@ -78,6 +93,21 @@ fio -> wheelie engine -> клиентская библиотека -> прото
   callback и забирает буфер обратно, когда callback вернулся. Данные нужно
   скопировать, если они нужны дольше.
 
+Так выглядит одна операция от подачи до продолжения корутины:
+
+```mermaid
+sequenceDiagram
+    participant C as корутина
+    participant R as реактор
+    participant K as ядро или пул потоков
+    C->>R: co_await reactor.recv, операция записана
+    Note over C: корутина приостановлена
+    R->>K: wio_wait отдаёт записанные операции
+    K-->>R: операция завершилась
+    R->>C: callback возобновляет корутину
+    Note over C: результат или std::system_error
+```
+
 Набор операций первой итерации: `accept`, `connect`, `close`, `recv` (и
 multishot), `send`, `sendmsg`, `pread`, `pwrite` (с флагом
 `WIO_WRITE_DSYNC`), `fsync`, отмена. `open`, `stat`, `unlink`, registered
@@ -103,6 +133,18 @@ files и SEND_ZC пока не входят.
 - Кольцо буферов освобождается до финального callback: callback вправе
   освободить саму операцию.
 
+Жизнь multishot recv с кольцом буферов:
+
+```mermaid
+stateDiagram-v2
+    [*] --> armed : multishot recv и кольцо буферов
+    armed --> armed : кусок данных, callback, буфер возвращён в кольцо
+    armed --> rearming : ENOBUFS, буферы кончились и ядро закончило приём
+    rearming --> armed : реактор запускает приём заново
+    armed --> finished : конец потока, ошибка или отмена
+    finished --> [*] : кольцо освобождено, затем финальный callback
+```
+
 ## Бэкенд libc
 
 - Сокеты неблокирующие: `recv`, `send` и `sendmsg` вызываются с
@@ -123,6 +165,24 @@ files и SEND_ZC пока не входят.
   ожидание. Буфер один (`entry_size`), потому что кусок отдаётся и забывается
   до следующего приёма; `entries` не нужно.
 
+Где операция находится внутри `libc` и `alibc` (в списках реактора):
+
+```mermaid
+stateDiagram-v2
+    direction LR
+    [*] --> submitted : подача, операция записана
+    submitted --> completed : syscall дал результат
+    submitted --> waiting : EAGAIN, ждёт готовности fd
+    submitted --> pool : alibc, дисковая операция уходит в пул
+    waiting --> completed : poll сообщил готовность и syscall дал результат
+    waiting --> waiting : готовность оказалась ложной
+    pool --> completed : поток выполнил вызов
+    submitted --> completed : отмена
+    waiting --> completed : отмена
+    completed --> submitted : multishot, кусок отдан и приём продолжается
+    completed --> [*] : callback
+```
+
 ## Бэкенд alibc
 
 - Это `libc`, у которого дисковые операции (`pread`, `pwrite`, `fsync`)
@@ -142,6 +202,26 @@ files и SEND_ZC пока не входят.
 - Цена этой схемы и есть предмет сравнения: два захвата мьютекса и
   переключение контекста на каждую операцию, плюс `write` в `pipe` и `read`
   из него на каждую пачку завершений.
+
+Путь дисковой операции через пул:
+
+```mermaid
+sequenceDiagram
+    participant R as реактор
+    participant J as очередь заданий
+    participant W as рабочий поток
+    participant D as очередь готовых
+    participant P as pipe
+    R->>J: pread, pwrite или fsync
+    W->>J: берёт задание
+    W->>W: блокирующий вызов
+    W->>D: кладёт готовую операцию
+    W->>P: пишет байт, если очередь была пуста
+    P-->>R: poll видит, что pipe читаем
+    R->>P: вычитывает pipe
+    R->>D: забирает все готовые операции
+    R->>R: запускает их callback
+```
 
 ## Корутины
 
@@ -176,6 +256,37 @@ files и SEND_ZC пока не входят.
 `wheelie-server` отдаёт файл или блочное устройство по протоколу из
 [protocol.md](protocol.md). Он написан один раз на корутинах поверх реактора, а
 чем выполняется ввод-вывод, выбирается при запуске.
+
+Что происходит с запросами одного соединения: они выполняются одновременно, а
+ответы идут по одному потоку байтов через писателя:
+
+```mermaid
+sequenceDiagram
+    participant K as клиент
+    participant S as корутина соединения
+    participant H as обработчики запросов
+    participant W as писатель
+    K->>S: запросы 1, 2 и 3 подряд
+    S->>H: по обработчику на каждый запрос
+    H->>H: pread или pwrite, запросы выполняются одновременно
+    H->>W: ответ 2 в очередь, обработчик завершён
+    W->>K: sendmsg с ответом 2
+    H->>W: ответы 1 и 3 в очередь, пока шла отправка
+    W->>K: один sendmsg с ответами 1 и 3
+```
+
+Жизнь соединения от `accept` до `close`:
+
+```mermaid
+flowchart TB
+    accept["accept"] --> serve["serve_connection"]
+    serve --> read["читает куски, парсер собирает запросы"]
+    read -- "запрос" --> handler["обработчик: диск, ответ в очередь"]
+    read -- "конец потока или ошибка" --> wait["ждёт, пока обработчики положат ответы"]
+    wait --> finish["говорит писателю закончить"]
+    finish --> flush["писатель досылает очередь"]
+    flush --> close["close"]
+```
 
 - **Потоки.** `--threads N` потоков, в каждом свой реактор со своими
   соединениями; слушающий сокет у них общий, и ядро само раздаёт новые
