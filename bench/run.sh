@@ -165,6 +165,7 @@ case $started in
     exit 1
     ;;
 esac
+echo "${started#wheelie-server: }" > "$out_abs/$name.server"
 
 echo "== fio: $mode bs=$bs depth=$depth numjobs=$numjobs sync=$sync, ${ramp}s ramp and ${runtime}s measured"
 raw="/results/$name.out"
@@ -207,4 +208,4 @@ for direction in ("read", "write"):
         clat["mean"] / 1000, clat["percentile"]["99.000000"] / 1000))
 PY
 fi
-echo "results: $out/$name.txt, $out/$name.json"
+echo "results: $out/$name.txt, $out/$name.json, $out/$name.server"
