@@ -15,7 +15,8 @@ make test
 ```
 
 Стенд из двух контейнеров и скрипт замеров `bench/run.sh` описаны в
-[docs/bench.md](docs/bench.md).
+[docs/bench.md](docs/bench.md); как мерить на новом железе, читать результаты
+и искать, где потеряна скорость, — в [docs/methodology.md](docs/methodology.md).
 
 Движок для fio (`fio/.libs/wheelie.so`) собирается против исходников fio из
 подмодуля `3rdparty/fio`; подробности в [docs/fio.md](docs/fio.md).
