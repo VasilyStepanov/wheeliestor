@@ -18,6 +18,8 @@ The load:
                     (default: randread)
   --depth N         requests in flight on a connection (default: 16)
   --numjobs N       fio jobs, each with a connection of its own (default: 1)
+  --queues N        connections of each fio job, over which its requests are
+                    spread (default: 1)
   --sync 0|1        1 makes a write durable before it is answered (default: 0)
   --runtime SEC     measured time (default: 10)
   --ramp SEC        time before the measure, thrown away (default: 3)
@@ -42,7 +44,7 @@ Environment:
 USAGE
 }
 
-bs=4k mode=randread depth=16 numjobs=1 sync=0 runtime=10 ramp=3 size=1g
+bs=4k mode=randread depth=16 numjobs=1 queues=1 sync=0 runtime=10 ramp=3 size=1g
 backend=uring multishot=0 direct=1 threads=""
 name="" out=results build=1 keep=0
 
@@ -52,6 +54,7 @@ while [ $# -gt 0 ]; do
     --mode) mode=$2; shift 2 ;;
     --depth) depth=$2; shift 2 ;;
     --numjobs) numjobs=$2; shift 2 ;;
+    --queues) queues=$2; shift 2 ;;
     --sync) sync=$2; shift 2 ;;
     --runtime) runtime=$2; shift 2 ;;
     --ramp) ramp=$2; shift 2 ;;
@@ -98,13 +101,24 @@ to_mb() {
 size_mb=$(to_mb "$size")
 file_mb=$((size_mb > 2048 ? size_mb : 2048))
 
+case $queues in
+'' | *[!0-9]* | 0)
+    echo "bench/run.sh: --queues must be a positive number" >&2
+    exit 2
+    ;;
+esac
+
 # A connection keeps one receive, and each request that is not answered yet a
 # disk operation or a send: the server has to have room for all of them.
-queue_depth=$((numjobs * (depth + 2) * 2))
+queue_depth=$((numjobs * (depth + 2 * queues) * 2))
 [ "$queue_depth" -lt 1024 ] && queue_depth=1024
 
 # How the variant is told in a name and in a line: the value of a command
 # substitution that fails would stop the script, so it is not used for this.
+queues_name=""
+if [ "$queues" -gt 1 ]; then
+    queues_name=_q$queues
+fi
 ms_name="" ms_text=""
 if [ "$multishot" = 1 ]; then
     ms_name=_ms
@@ -115,7 +129,7 @@ if [ "$direct" = 1 ]; then
     direct_text=O_DIRECT
 fi
 
-[ -n "$name" ] || name="${mode}_bs${bs}_qd${depth}_nj${numjobs}_${backend}${ms_name}_sync${sync}"
+[ -n "$name" ] || name="${mode}_bs${bs}_qd${depth}_nj${numjobs}${queues_name}_${backend}${ms_name}_sync${sync}"
 mkdir -p "$out"
 out_abs=$(cd "$out" && pwd)
 
@@ -167,7 +181,7 @@ case $started in
 esac
 echo "${started#wheelie-server: }" > "$out_abs/$name.server"
 
-echo "== fio: $mode bs=$bs depth=$depth numjobs=$numjobs sync=$sync, ${ramp}s ramp and ${runtime}s measured"
+echo "== fio: $mode bs=$bs depth=$depth numjobs=$numjobs queues=$queues sync=$sync, ${ramp}s ramp and ${runtime}s measured"
 raw="/results/$name.out"
 compose run --rm -T --user "$(id -u):$(id -g)" client \
     fio --name="$name" \
@@ -175,6 +189,7 @@ compose run --rm -T --user "$(id -u):$(id -g)" client \
     --filename='wheelie\://server\:39900' \
     --wheelie_backend="$backend" --wheelie_multishot="$multishot" \
     --rw="$mode" --bs="$bs" --iodepth="$depth" --numjobs="$numjobs" \
+    --wheelie_queues="$queues" \
     --sync="$sync" --size="$size" \
     --runtime="$runtime" --ramp_time="$ramp" --time_based \
     --thread --group_reporting \
