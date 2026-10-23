@@ -34,6 +34,8 @@ The variant, which the server and the client both get:
   --backend NAME    libc, alibc or uring (default: uring)
   --multishot       receive with one multishot receive instead of one per chunk
   --direct 0|1      the server opens its file with O_DIRECT (default: 1)
+  --data disk|tmpfs where the server's file is: on the volume of a disk, or in
+                    memory, with no disk under the load (default: disk)
   --threads N       server threads, each with a reactor (default: its CPUs)
 
 The run:
@@ -50,7 +52,7 @@ USAGE
 }
 
 bs=4k mode=randread depth=16 numjobs=1 queues=1 sync=0 runtime=10 ramp=3 size=1g
-backend=uring multishot=0 direct=1 threads=""
+backend=uring multishot=0 direct=1 data=disk threads=""
 complete_max="" complete_min="" submit_batch="" server_cpus="" client_cpus=""
 name="" out=results build=1 keep=0
 
@@ -73,6 +75,7 @@ while [ $# -gt 0 ]; do
     --backend) backend=$2; shift 2 ;;
     --multishot) multishot=1; shift ;;
     --direct) direct=$2; shift 2 ;;
+    --data) data=$2; shift 2 ;;
     --threads) threads=$2; shift 2 ;;
     --name) name=$2; shift 2 ;;
     --out) out=$2; shift 2 ;;
@@ -90,6 +93,10 @@ esac
 case $direct in
 0 | 1) ;;
 *) echo "bench/run.sh: --direct must be 0 or 1" >&2; exit 2 ;;
+esac
+case $data in
+disk | tmpfs) ;;
+*) echo "bench/run.sh: --data must be disk or tmpfs" >&2; exit 2 ;;
 esac
 
 fio_options=()
@@ -179,6 +186,7 @@ cat > "$env_file" << ENV
 WHEELIE_BACKEND=$backend
 WHEELIE_MULTISHOT=$multishot
 WHEELIE_DIRECT=$direct
+WHEELIE_DATA=$data
 WHEELIE_THREADS=$threads
 WHEELIE_QUEUE_DEPTH=$queue_depth
 WHEELIE_FILE_SIZE_MB=$file_mb
@@ -187,7 +195,12 @@ WHEELIE_SERVER_CPUS=$server_cpus
 WHEELIE_CLIENT_CPUS=$client_cpus
 ENV
 
-compose() { $DOCKER compose --env-file "$env_file" "$@"; }
+compose_files=(-f docker-compose.yml)
+if [ "$data" = tmpfs ]; then
+    compose_files+=(-f docker-compose.tmpfs.yml)
+fi
+
+compose() { $DOCKER compose --env-file "$env_file" "${compose_files[@]}" "$@"; }
 
 cleanup() {
     if [ "$keep" = 0 ]; then
@@ -222,6 +235,14 @@ case $started in
     ;;
 esac
 echo "${started#wheelie-server: }" > "$out_abs/$name.server"
+
+# The same for where the file is: a volume that was made before may be on a disk.
+data_type=$(compose exec -T server stat -f -c %T /data | tr -d '\r')
+echo "== server: the file is on $data_type"
+if [ "$data" = tmpfs ] && [ "$data_type" != tmpfs ]; then
+    echo "bench/run.sh: the server's file is not in memory ($data_type)" >&2
+    exit 1
+fi
 
 echo "== fio: $mode bs=$bs depth=$depth numjobs=$numjobs queues=$queues sync=$sync, ${ramp}s ramp and ${runtime}s measured"
 raw="/results/$name.out"
