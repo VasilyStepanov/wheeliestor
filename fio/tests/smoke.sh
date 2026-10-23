@@ -129,6 +129,8 @@ run_combo() {
         --numjobs=2 --offset_increment=4m --verify=crc32c --do_verify=1
     job "queue depth 1" --size=1m --bs=4k --iodepth=1 --rw=write \
         --verify=crc32c --do_verify=1
+    job "four connections" --size=8m --bs=4k --iodepth=16 --rw=write \
+        --wheelie_queues=4 --verify=crc32c --do_verify=1
     stop_server
 }
 

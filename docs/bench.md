@@ -40,6 +40,7 @@ bench/run.sh --mode randread --bs 4k --depth 16 --numjobs 1 --backend uring
 | `--mode`        | `randread`                                 | `randread`, `randwrite`, `read`, `write`, `randrw`           |
 | `--depth`       | `16`                                       | запросов в полёте на соединении                              |
 | `--numjobs`     | `1`                                        | заданий fio, у каждого своё соединение                       |
+| `--queues`      | `1`                                        | соединений у каждого задания, по ним раскладываются его запросы |
 | `--sync 0\|1`   | `0`                                        | 1 — запись, надёжная к моменту ответа (`WHEELIE_FLAG_SYNC`)  |
 | `--backend`     | `uring`                                    | `libc`, `alibc` или `uring`: **и у сервера, и у клиента**    |
 | `--multishot`   | выключен                                   | приём одним multishot recv, **у сервера и у клиента**        |

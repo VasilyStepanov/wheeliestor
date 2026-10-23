@@ -108,6 +108,7 @@ int wheelie_client_create(const WheelieClientOptions *options,
   cpp_options.backend = options->backend;
   cpp_options.multishot = options->multishot;
   cpp_options.depth = options->depth;
+  cpp_options.queues = options->queues != 0 ? options->queues : 1;
   try {
     *client = new WheelieClient(cpp_options);
     return 0;
