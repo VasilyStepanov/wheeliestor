@@ -1,0 +1,14 @@
+# Puts the server's file in memory: with this file over docker-compose.yml the
+# volume of the server is a tmpfs, so that there is no disk under the load.
+# bench/run.sh --data tmpfs adds it.
+#
+# The volume has a name of its own: a volume that exists keeps the options it
+# was created with, and the one on a disk must not be taken for this one.
+
+volumes:
+  data:
+    name: wheeliestor_data_tmpfs
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: size=4g
