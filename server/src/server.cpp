@@ -83,6 +83,11 @@ struct Server::Impl {
   int listen_fd = -1;
   std::atomic<bool> stopping{false};
   std::vector<std::thread> workers;
+  // For each reactor but the acceptor, a socket pair that the acceptor gives
+  // the descriptors of its connections on: it sends on `handoff_out` and the
+  // reactor receives on `handoff_in`. The entry of the acceptor is -1.
+  std::vector<int> handoff_in;
+  std::vector<int> handoff_out;
   std::mutex error_mutex;
   std::exception_ptr error;
 
@@ -98,7 +103,12 @@ struct Server::Impl {
 
   // Cancels what the reactor has in flight and gives it a moment to finish.
   void drain(WorkerContext &context) {
-    context.reactor.cancel_fd(listen_fd);
+    if (context.listen_fd >= 0) {
+      context.reactor.cancel_fd(context.listen_fd);
+    }
+    if (context.handoff_in >= 0) {
+      context.reactor.cancel_fd(context.handoff_in);
+    }
     std::vector<int> connections(context.connections.begin(),
                                  context.connections.end());
     for (int fd : connections) {
@@ -109,13 +119,24 @@ struct Server::Impl {
     }
   }
 
-  void worker_main(std::promise<void> ready) {
+  void worker_main(unsigned int index, std::promise<void> ready) {
     bool announced = false;
     try {
       wheelio::Reactor reactor(config.backend, config.queue_depth);
-      WorkerContext context{reactor,          file_fd,  listen_fd,
-                            config.multishot, stopping, {}};
-      wheelio::spawn(accept_loop(context));
+      bool acceptor = index == 0;
+      WorkerContext context{reactor,
+                            file_fd,
+                            acceptor ? listen_fd : -1,
+                            config.multishot,
+                            stopping,
+                            handoff_in[index],
+                            acceptor ? handoff_out : std::vector<int>(),
+                            {}};
+      if (acceptor) {
+        wheelio::spawn(accept_loop(context));
+      } else {
+        wheelio::spawn(receive_loop(context));
+      }
       ready.set_value();
       announced = true;
 
@@ -155,11 +176,23 @@ uint16_t Server::start() {
     impl.listen_fd = open_listener(impl.config.host, impl.config.port);
     uint16_t port = port_of(impl.listen_fd);
 
+    impl.handoff_in.assign(impl.config.threads, -1);
+    impl.handoff_out.assign(impl.config.threads, -1);
+    for (unsigned int i = 1; i < impl.config.threads; ++i) {
+      int pair[2];
+      if (::socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, pair) < 0) {
+        throw_errno(errno, "socketpair");
+      }
+      impl.handoff_out[i] = pair[0];
+      impl.handoff_in[i] = pair[1];
+    }
+
     std::vector<std::future<void>> ready;
     for (unsigned int i = 0; i < impl.config.threads; ++i) {
       std::promise<void> promise;
       ready.push_back(promise.get_future());
-      impl.workers.emplace_back(&Impl::worker_main, &impl, std::move(promise));
+      impl.workers.emplace_back(&Impl::worker_main, &impl, i,
+                                std::move(promise));
     }
     for (std::future<void> &future : ready) {
       future.get();
@@ -178,6 +211,26 @@ void Server::stop() {
     worker.join();
   }
   impl.workers.clear();
+
+  // What the acceptor gave and no reactor took is closed.
+  for (int fd : impl.handoff_in) {
+    while (fd >= 0) {
+      int given;
+      if (::recv(fd, &given, sizeof(given), MSG_DONTWAIT) !=
+          static_cast<ssize_t>(sizeof(given))) {
+        break;
+      }
+      ::close(given);
+    }
+  }
+  for (std::vector<int> *fds : {&impl.handoff_in, &impl.handoff_out}) {
+    for (int &fd : *fds) {
+      if (fd >= 0) {
+        ::close(fd);
+        fd = -1;
+      }
+    }
+  }
 
   if (impl.listen_fd >= 0) {
     ::close(impl.listen_fd);
