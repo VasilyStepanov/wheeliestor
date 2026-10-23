@@ -146,22 +146,30 @@ static int fio_wheelie_getevents(struct thread_data *td, unsigned int min,
     limit_ms = (long long)t->tv_sec * 1000 + t->tv_nsec / 1000000;
   }
 
-  /* Whatever has completed already is taken at once. */
-  ret = wheelie_client_wait(wd->client, 0);
-  while (ret == 0 && wd->nr_events < min) {
-    long long left_ms = -1;
+  /*
+   * Every wait also submits what has been queued since the last one, so the
+   * first wait is blocking only if fio needs more events than it has and
+   * something is in flight to supply them: a non-blocking wait ahead of a
+   * blocking one costs a second system call when nothing has completed yet.
+   */
+  for (;;) {
+    long long left_ms = 0;
 
-    /* Nothing is in flight that could still finish. */
-    if (wheelie_client_inflight(wd->client) == 0) {
-      break;
-    }
-    if (t) {
-      left_ms = limit_ms - milliseconds_since(&start);
-      if (left_ms <= 0) {
-        break;
+    if (wd->nr_events < min && wheelie_client_inflight(wd->client) > 0) {
+      left_ms = -1;
+      if (t) {
+        left_ms = limit_ms - milliseconds_since(&start);
+        if (left_ms < 0) {
+          left_ms = 0;
+        }
       }
     }
     ret = wheelie_client_wait(wd->client, (int)left_ms);
+
+    if (ret != 0 || wd->nr_events >= min ||
+        wheelie_client_inflight(wd->client) == 0 || left_ms == 0) {
+      break;
+    }
   }
   if (ret < 0) {
     log_err("wheelie: wait failed: %s\n", strerror(-ret));
