@@ -155,6 +155,16 @@ static int fio_wheelie_getevents(struct thread_data *td, unsigned int min,
     wd->nr_returned = 0;
   }
 
+  /*
+   * Ready events can satisfy the caller without entering the reactor.
+   * Requests queued meanwhile are submitted when these events run out;
+   * a non-blocking poll still has to submit them even if it needs no events.
+   */
+  if (min > 0 && wd->nr_events >= min) {
+    wd->nr_returned = wd->nr_events < max ? wd->nr_events : max;
+    return wd->nr_returned;
+  }
+
   clock_gettime(CLOCK_MONOTONIC, &start);
   if (t) {
     limit_ms = (long long)t->tv_sec * 1000 + t->tv_nsec / 1000000;

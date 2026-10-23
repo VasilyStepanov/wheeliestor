@@ -80,6 +80,40 @@ class ReportTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             report.Result(stats["jobs"][0], 1)
 
+    def test_failed_fio_jobs_are_refused(self):
+        stats = fio_json("read", "4k", 16, 1, "uring", True, 100, 400)
+        stats["jobs"][0]["error"] = 5
+        with self.assertRaisesRegex(ValueError, "fio job failed"):
+            report.Result(stats["jobs"][0], 1)
+
+    def test_different_tuning_and_server_settings_keep_separate_rows(self):
+        results = Results(self)
+        cases = [({}, {}), ({"wheelie_queues": "4"}, {}),
+                 ({"iodepth_batch": "16"}, {}),
+                 ({"iodepth_batch_complete_min": "16"}, {}),
+                 ({"iodepth_batch_complete_max": "16"}, {}),
+                 ({"cpus_allowed": "12-19", "cpus_allowed_policy": "split"}, {}),
+                 ({}, {"WHEELIE_SERVER_CPUS": "8-11", "WHEELIE_THREADS": "4"}),
+                 ({}, {"WHEELIE_SERVER_CPUS": "16-19", "WHEELIE_THREADS": "4"}),
+                 ({}, {"WHEELIE_DIRECT": "0"})]
+        for i, (options, settings) in enumerate(cases):
+            stats = fio_json("randread", "4k", 16, 8, "uring", True,
+                             100 + i, 400 + i * 4, timestamp=i)
+            stats["jobs"][0]["job options"].update(options)
+            path = os.path.join(results.path, str(i))
+            with open(path + ".json", "w") as handle:
+                json.dump(stats, handle)
+            if settings:
+                with open(path + ".settings", "w") as handle:
+                    for key, value in settings.items():
+                        handle.write(key + "=" + value + "\n")
+        read = report.read_results([results.path])
+        self.assertEqual(len(read), len(cases))
+        table = report.results_table(read, report.variants_of(read))
+        self.assertIn("queues=4", table)
+        self.assertIn("complete-max=16", table)
+        self.assertIn("server-cpus=8-11", table)
+
     def test_a_cell_is_iops_bandwidth_and_spread(self):
         results = report.read_results([self.results().path])
         cell = results[("randread", "4k", 1, 1, 0)]["libc"].cell()

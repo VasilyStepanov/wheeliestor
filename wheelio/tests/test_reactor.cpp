@@ -455,6 +455,35 @@ TEST_P(ReactorTest, RecvMultishotSeesEndOfStream) {
   EXPECT_EQ(wio_reactor_inflight(reactor_), 0u);
 }
 
+TEST_P(ReactorTest, RecvMultishotPreservesPartialBuffersAcrossWaits) {
+  Fd a, b;
+  ASSERT_TRUE(socket_pair(a, b));
+  StreamRequest stream = {};
+  char expected[4096];
+  size_t size = 0;
+
+  ASSERT_EQ(
+      wio_recv_multishot(reactor_, &stream.op, b.get(), 64, 2, 0, on_chunk), 0);
+  for (size_t round = 0; round < 128; ++round) {
+    size_t take = 1 + round * 17 % 47;
+    for (size_t i = 0; i < take; ++i) {
+      expected[size + i] = static_cast<char>((size + i) % 251);
+    }
+    ASSERT_EQ(::write(a.get(), expected + size, take),
+              static_cast<ssize_t>(take));
+    size += take;
+    ASSERT_TRUE(run_until([&] { return stream.size == size; }));
+    EXPECT_EQ(memcmp(stream.data, expected, size), 0) << "round " << round;
+    EXPECT_FALSE(stream.finished);
+  }
+
+  a.reset();
+  ASSERT_TRUE(run_until([&] { return stream.finished; }));
+  EXPECT_EQ(stream.final_result, 0);
+  EXPECT_EQ(stream.size, size);
+  EXPECT_EQ(wio_reactor_inflight(reactor_), 0u);
+}
+
 TEST_P(ReactorTest, RecvMultishotSurvivesRunningOutOfBuffers) {
   Fd a, b;
   ASSERT_TRUE(socket_pair(a, b));
