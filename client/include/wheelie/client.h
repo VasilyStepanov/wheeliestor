@@ -19,7 +19,7 @@ extern "C" {
 #endif
 
 /**
- * A client of a wheelie server: one connection and the requests in flight on
+ * A client of a wheelie server: its connections and the requests in flight on
  * it. It belongs to one thread, and nothing in it is safe to call from
  * another.
  *
@@ -54,6 +54,9 @@ typedef struct {
   bool multishot;
   /* The most requests in flight at a time. */
   unsigned int depth;
+  /* The connections to the server, which the requests are spread over in
+   * turn; 0 is the same as 1. */
+  unsigned int queues;
 } WheelieClientOptions;
 
 /**

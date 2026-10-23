@@ -6,6 +6,7 @@
 
 #include <arpa/inet.h>
 #include <netinet/in.h>
+#include <poll.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
@@ -84,13 +85,14 @@ protected:
   }
 
   // Connects a client, or returns the error.
-  int open_client(unsigned int client_depth) {
+  int open_client(unsigned int client_depth, unsigned int queues = 1) {
     WheelieClientOptions options = {};
     options.host = "127.0.0.1";
     options.port = _port;
     options.backend = std::get<0>(GetParam());
     options.multishot = std::get<1>(GetParam());
     options.depth = client_depth;
+    options.queues = queues;
     return wheelie_client_create(&options, &_client);
   }
 
@@ -372,6 +374,133 @@ TEST_P(ClientTest, ServerGoingAwayFailsTheRequestsAndTheOnesAfter) {
   EXPECT_EQ(b.calls, 0);
 }
 
+namespace {
+
+constexpr unsigned int many_queues = 4;
+
+} // namespace
+
+// What goes out on one connection comes back on it, and every request of a
+// client with several connections is answered with its own data.
+TEST_P(ClientTest, RequestsOverSeveralConnectionsAreAllAnswered) {
+  wheelie_client_delete(_client);
+  _client = nullptr;
+  ASSERT_EQ(open_client(depth, many_queues), 0);
+
+  std::vector<std::vector<char>> data;
+  std::vector<std::vector<char>> back(depth, std::vector<char>(4096));
+  std::vector<Result> written(depth), read(depth);
+
+  for (unsigned int i = 0; i < depth; ++i) {
+    data.push_back(pattern(4096, 40 + i));
+    ASSERT_EQ(wheelie_client_pwrite(_client, data[i].data(), 4096, i * 4096, 0,
+                                    on_done, &written[i]),
+              0);
+  }
+  ASSERT_TRUE(finish_everything());
+  for (unsigned int i = 0; i < depth; ++i) {
+    EXPECT_EQ(written[i].res, 4096) << i;
+  }
+
+  for (unsigned int i = 0; i < depth; ++i) {
+    ASSERT_EQ(wheelie_client_pread(_client, back[i].data(), 4096, i * 4096,
+                                   on_done, &read[i]),
+              0);
+  }
+  ASSERT_TRUE(finish_everything());
+  for (unsigned int i = 0; i < depth; ++i) {
+    EXPECT_EQ(read[i].res, 4096) << i;
+    EXPECT_EQ(back[i], data[i]) << i;
+  }
+}
+
+// Every connection has a receive in flight, and a send besides: the client
+// has room for all of them, however many connections it has.
+TEST_P(ClientTest, ManyConnectionsWithEveryRequestInFlight) {
+  constexpr unsigned int connections = 16;
+  constexpr unsigned int requests = 64;
+
+  wheelie_client_delete(_client);
+  _client = nullptr;
+  ASSERT_EQ(open_client(requests, connections), 0);
+
+  std::vector<std::vector<char>> data;
+  std::vector<std::vector<char>> back(requests, std::vector<char>(4096));
+  std::vector<Result> written(requests), read(requests);
+
+  for (unsigned int i = 0; i < requests; ++i) {
+    data.push_back(pattern(4096, 70 + i));
+    ASSERT_EQ(wheelie_client_pwrite(_client, data[i].data(), 4096, i * 4096, 0,
+                                    on_done, &written[i]),
+              0)
+        << i;
+  }
+  ASSERT_TRUE(finish_everything());
+  for (unsigned int i = 0; i < requests; ++i) {
+    EXPECT_EQ(written[i].res, 4096) << i;
+  }
+
+  for (unsigned int i = 0; i < requests; ++i) {
+    ASSERT_EQ(wheelie_client_pread(_client, back[i].data(), 4096, i * 4096,
+                                   on_done, &read[i]),
+              0)
+        << i;
+  }
+  ASSERT_TRUE(finish_everything());
+  for (unsigned int i = 0; i < requests; ++i) {
+    EXPECT_EQ(read[i].res, 4096) << i;
+    EXPECT_EQ(back[i], data[i]) << i;
+  }
+}
+
+TEST_P(ClientTest, DeletingCancelsWhatIsInFlightOnEveryConnection) {
+  wheelie_client_delete(_client);
+  _client = nullptr;
+  ASSERT_EQ(open_client(depth, many_queues), 0);
+
+  std::vector<char> buffer(4096);
+  std::vector<Result> results(2 * many_queues);
+  for (Result &result : results) {
+    ASSERT_EQ(wheelie_client_pread(_client, buffer.data(), buffer.size(), 0,
+                                   on_done, &result),
+              0);
+  }
+
+  wheelie_client_delete(_client);
+  _client = nullptr;
+  for (const Result &result : results) {
+    EXPECT_EQ(result.calls, 1);
+    EXPECT_EQ(result.res, -ECANCELED);
+  }
+}
+
+TEST_P(ClientTest, ServerGoingAwayFailsTheRequestsOfEveryConnection) {
+  wheelie_client_delete(_client);
+  _client = nullptr;
+  ASSERT_EQ(open_client(depth, many_queues), 0);
+
+  std::vector<char> buffer(4096);
+  std::vector<Result> results(2 * many_queues);
+  for (Result &result : results) {
+    ASSERT_EQ(wheelie_client_pread(_client, buffer.data(), buffer.size(), 0,
+                                   on_done, &result),
+              0);
+  }
+
+  _server->stop();
+  ASSERT_TRUE(finish_everything());
+  for (const Result &result : results) {
+    EXPECT_EQ(result.calls, 1);
+    EXPECT_LT(result.res, 0);
+  }
+
+  Result after;
+  EXPECT_LT(wheelie_client_pread(_client, buffer.data(), buffer.size(), 0,
+                                 on_done, &after),
+            0);
+  EXPECT_EQ(after.calls, 0);
+}
+
 TEST_P(ClientTest, TwoClientsDoNotGetInEachOthersWay) {
   WheelieClient *other = nullptr;
   WheelieClientOptions options = {};
@@ -440,6 +569,80 @@ TEST(ClientConnect, RefusedConnectionIsAnError) {
   WheelieClient *client = nullptr;
   EXPECT_EQ(wheelie_client_create(&options, &client), -ECONNREFUSED);
   EXPECT_EQ(client, nullptr);
+}
+
+// A server that only counts: a client with several connections makes them all
+// when it is created, and hands the requests to them in turn.
+TEST(ClientQueues, RequestsGoOutOnTheConnectionsInTurn) {
+  constexpr unsigned int connections = 3;
+  constexpr unsigned int per_connection = 2;
+
+  int listener = socket(AF_INET, SOCK_STREAM, 0);
+  ASSERT_GE(listener, 0);
+  sockaddr_in address = {};
+  address.sin_family = AF_INET;
+  address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  ASSERT_EQ(
+      bind(listener, reinterpret_cast<sockaddr *>(&address), sizeof(address)),
+      0);
+  ASSERT_EQ(listen(listener, 16), 0);
+  socklen_t length = sizeof(address);
+  ASSERT_EQ(
+      getsockname(listener, reinterpret_cast<sockaddr *>(&address), &length),
+      0);
+
+  WheelieClientOptions options = {};
+  options.host = "127.0.0.1";
+  options.port = ntohs(address.sin_port);
+  options.backend = WIO_BACKEND_LIBC;
+  options.depth = connections * per_connection;
+  options.queues = connections;
+  WheelieClient *client = nullptr;
+  ASSERT_EQ(wheelie_client_create(&options, &client), 0);
+
+  int accepted[connections];
+  for (int &fd : accepted) {
+    pollfd waiting = {listener, POLLIN, 0};
+    ASSERT_EQ(poll(&waiting, 1, 1000), 1);
+    fd = accept(listener, nullptr, nullptr);
+    ASSERT_GE(fd, 0);
+  }
+
+  std::vector<char> buffer(4096);
+  std::vector<Result> results(connections * per_connection);
+  for (Result &result : results) {
+    ASSERT_EQ(wheelie_client_pread(client, buffer.data(), buffer.size(), 0,
+                                   on_done, &result),
+              0);
+  }
+  for (int i = 0; i < 5; ++i) {
+    ASSERT_EQ(wheelie_client_wait(client, 20), 0);
+  }
+
+  // Each connection has got the same share of the requests, and nothing else.
+  for (int fd : accepted) {
+    size_t got = 0;
+    while (got < per_connection * sizeof(WheelieRequestHeader)) {
+      pollfd readable = {fd, POLLIN, 0};
+      ASSERT_EQ(poll(&readable, 1, 1000), 1);
+      char data[256];
+      ssize_t n = recv(fd, data, sizeof(data), 0);
+      ASSERT_GT(n, 0);
+      got += static_cast<size_t>(n);
+    }
+    EXPECT_EQ(got, per_connection * sizeof(WheelieRequestHeader));
+    pollfd more = {fd, POLLIN, 0};
+    EXPECT_EQ(poll(&more, 1, 50), 0);
+  }
+
+  wheelie_client_delete(client);
+  for (const Result &result : results) {
+    EXPECT_EQ(result.calls, 1);
+  }
+  for (int fd : accepted) {
+    ::close(fd);
+  }
+  ::close(listener);
 }
 
 TEST(ClientConnect, UnknownHostIsAnError) {

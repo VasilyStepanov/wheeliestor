@@ -16,6 +16,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <deque>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -31,11 +32,15 @@ struct ClientOptions {
   bool multishot = false;
   // The most requests in flight at a time.
   unsigned int depth = 64;
+  // The connections to the server, which the requests are spread over in
+  // turn. A server serves each of them on a thread of its own, so a client
+  // with more than one can keep several of them busy at once.
+  unsigned int queues = 1;
 };
 
 /**
- * A client of a wheelie server: one connection, and the requests in flight on
- * it, each of which a coroutine awaits.
+ * A client of a wheelie server: its connections, and the requests in flight on
+ * them, each of which a coroutine awaits.
  *
  *     size_t read = co_await client.pread(buffer, size, offset);
  *
@@ -118,7 +123,18 @@ private:
     // The destination of a read, the source of a write.
     void *buffer;
     Request *request;
+    // The connection the request goes out on, and its response comes back on.
+    unsigned int connection;
     bool in_use;
+  };
+
+  // A connection to the server, with the requests to send on it.
+  struct Connection {
+    int fd = -1;
+    // The requests that have been submitted and not sent, in order.
+    std::deque<uint32_t> outgoing;
+    std::coroutine_handle<> writer_waiting;
+    wheelio::Task<void> session;
   };
 
   void submit(Request *request, uint8_t op, unsigned int flags, void *buffer,
@@ -126,32 +142,29 @@ private:
   void complete(uint32_t index, int64_t res);
   void fail_everything();
   void record_error(int error) noexcept;
-  void wake_writer();
+  void wake_writer(Connection &connection);
 
   class WorkAwaiter;
 
-  wheelio::Task<void> session();
-  template <typename Chunks> wheelio::Task<void> read_responses(Chunks &chunks);
-  wheelio::Task<void> write_requests();
+  wheelio::Task<void> session(unsigned int index);
+  template <typename Chunks>
+  wheelio::Task<void> read_responses(unsigned int index, Chunks &chunks);
+  wheelio::Task<void> write_requests(unsigned int index);
 
   wheelio::Reactor _reactor;
   const bool _multishot;
-  int _fd = -1;
+  std::vector<std::unique_ptr<Connection>> _connections;
+  // The connection the next request goes out on.
+  unsigned int _next_connection = 0;
 
   std::vector<Slot> _slots;
   std::vector<uint32_t> _free;
   unsigned int _in_flight = 0;
 
-  // The requests that have been submitted and not sent, in order.
-  std::deque<uint32_t> _outgoing;
-  std::coroutine_handle<> _writer_waiting;
-
-  // Ends the writer when set. The error that broke the connection, as a
+  // Ends the writers when set. The error that broke the connection, as a
   // negative errno, is the first one recorded; 0 while it is whole.
   bool _finishing = false;
   int _error = 0;
-
-  wheelio::Task<void> _session;
 };
 
 } // namespace wheelie

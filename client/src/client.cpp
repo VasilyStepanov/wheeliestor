@@ -24,9 +24,11 @@ namespace wheelie {
 
 namespace {
 
-// The operations a client has in flight at once: the receive of the responses
-// and the send of the requests, and the connect before them.
+// The operations a client has in flight at once: the connect, and for each
+// connection the receive of the responses, the send of the requests, and the
+// cancellation that ends them.
 constexpr unsigned int reactor_depth = 8;
+constexpr unsigned int reactor_depth_per_connection = 4;
 
 // The most requests one send carries. Each takes up to two iovecs, and a send
 // takes at most IOV_MAX of them.
@@ -75,30 +77,37 @@ sockaddr_in resolve(const char *host, uint16_t port) {
 
 } // namespace
 
-// Suspends the writer until there is something to send, or it is to finish.
+// Suspends the writer of a connection until there is something to send on it,
+// or it is to finish.
 class Client::WorkAwaiter final {
 private:
   Client &_client;
+  Connection &_connection;
 
 public:
-  explicit WorkAwaiter(Client &client) : _client(client) {}
+  WorkAwaiter(Client &client, Connection &connection)
+      : _client(client), _connection(connection) {}
 
   bool await_ready() const noexcept {
-    return !_client._outgoing.empty() || _client._finishing;
+    return !_connection.outgoing.empty() || _client._finishing;
   }
 
   void await_suspend(std::coroutine_handle<> h) noexcept {
-    _client._writer_waiting = h;
+    _connection.writer_waiting = h;
   }
 
   void await_resume() const noexcept {}
 };
 
 Client::Client(const ClientOptions &options)
-    : _reactor(options.backend, reactor_depth), _multishot(options.multishot),
-      _slots(options.depth), _session() {
+    : _reactor(options.backend,
+               reactor_depth + reactor_depth_per_connection * options.queues),
+      _multishot(options.multishot), _slots(options.depth) {
   if (options.depth == 0) {
     throw std::invalid_argument("wheelie: depth must not be 0");
+  }
+  if (options.queues == 0) {
+    throw std::invalid_argument("wheelie: queues must not be 0");
   }
   _free.reserve(options.depth);
   for (uint32_t i = options.depth; i > 0; --i) {
@@ -106,65 +115,93 @@ Client::Client(const ClientOptions &options)
   }
 
   sockaddr_in address = resolve(options.host.c_str(), options.port);
-  _fd = ::socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
-  if (_fd < 0) {
-    throw_errno(errno, "socket");
+  for (unsigned int i = 0; i < options.queues; ++i) {
+    _connections.push_back(std::make_unique<Connection>());
   }
 
+  // Every connection is made before any session starts: a session that is
+  // running cannot be taken down by an exception from here.
   try {
-    // The address is a parameter of the coroutine, so it lives as long as the
-    // connect does.
-    wheelio::Task<void> connecting =
-        [](Client &client, sockaddr_in address) -> wheelio::Task<void> {
-      co_await client._reactor.connect(
-          client._fd, reinterpret_cast<const sockaddr *>(&address),
-          sizeof(address));
-    }(*this, address);
-
-    for (int i = 0; i < connect_checks && !connecting.done(); ++i) {
-      _reactor.wait(connect_check_ms);
-    }
-    if (!connecting.done()) {
-      _reactor.cancel_fd(_fd);
-      for (int i = 0; i < drain_checks && !connecting.done(); ++i) {
-        _reactor.wait(drain_check_ms);
+    for (auto &connection : _connections) {
+      connection->fd = ::socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
+      if (connection->fd < 0) {
+        throw_errno(errno, "socket");
       }
-      throw_errno(ETIMEDOUT, "connect");
-    }
-    connecting.get();
+      int fd = connection->fd;
 
-    int one = 1;
-    setsockopt(_fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
+      // The address is a parameter of the coroutine, so it lives as long as
+      // the connect does.
+      wheelio::Task<void> connecting =
+          [](Client &client, int fd,
+             sockaddr_in address) -> wheelio::Task<void> {
+        co_await client._reactor.connect(
+            fd, reinterpret_cast<const sockaddr *>(&address), sizeof(address));
+      }(*this, fd, address);
+
+      for (int i = 0; i < connect_checks && !connecting.done(); ++i) {
+        _reactor.wait(connect_check_ms);
+      }
+      if (!connecting.done()) {
+        _reactor.cancel_fd(fd);
+        for (int i = 0; i < drain_checks && !connecting.done(); ++i) {
+          _reactor.wait(drain_check_ms);
+        }
+        throw_errno(ETIMEDOUT, "connect");
+      }
+      connecting.get();
+
+      int one = 1;
+      setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
+    }
   } catch (...) {
-    ::close(_fd);
-    _fd = -1;
+    for (auto &connection : _connections) {
+      if (connection->fd >= 0) {
+        ::close(connection->fd);
+        connection->fd = -1;
+      }
+    }
     throw;
   }
 
-  _session = session();
+  for (unsigned int i = 0; i < _connections.size(); ++i) {
+    _connections[i]->session = session(i);
+  }
 }
 
 Client::~Client() {
   _finishing = true;
   record_error(-ECANCELED);
-  if (_fd >= 0) {
-    _reactor.cancel_fd(_fd);
+  for (auto &connection : _connections) {
+    if (connection->fd >= 0) {
+      _reactor.cancel_fd(connection->fd);
+    }
+    wake_writer(*connection);
   }
-  wake_writer();
+  auto sessions_done = [this] {
+    for (auto &connection : _connections) {
+      if (!connection->session.done()) {
+        return false;
+      }
+    }
+    return true;
+  };
   try {
-    for (int i = 0; i < drain_checks && !_session.done(); ++i) {
+    for (int i = 0; i < drain_checks && !sessions_done(); ++i) {
       _reactor.wait(drain_check_ms);
     }
   } catch (...) { // NOLINT: nothing to do about it while closing
   }
 
-  if (!_session.done()) {
-    // Something is still suspended on an operation of the reactor: destroying
-    // the session would resume a frame that is gone, so it is left as it is.
-    new wheelio::Task<void>(std::move(_session));
-  }
-  if (_fd >= 0) {
-    ::close(_fd);
+  for (auto &connection : _connections) {
+    if (!connection->session.done()) {
+      // Something is still suspended on an operation of the reactor:
+      // destroying the session would resume a frame that is gone, so it is
+      // left as it is.
+      new wheelio::Task<void>(std::move(connection->session));
+    }
+    if (connection->fd >= 0) {
+      ::close(connection->fd);
+    }
   }
 }
 
@@ -174,9 +211,9 @@ void Client::record_error(int error) noexcept {
   }
 }
 
-void Client::wake_writer() {
-  if (_writer_waiting) {
-    std::exchange(_writer_waiting, {}).resume();
+void Client::wake_writer(Connection &connection) {
+  if (connection.writer_waiting) {
+    std::exchange(connection.writer_waiting, {}).resume();
   }
 }
 
@@ -210,14 +247,18 @@ void Client::submit(Request *request, uint8_t op, unsigned int flags,
 
   uint32_t index = _free.back();
   _free.pop_back();
+  unsigned int connection_index = _next_connection;
+  _next_connection = (_next_connection + 1) % _connections.size();
   Slot &slot = _slots[index];
   slot.header = {index, offset, size, op, static_cast<uint8_t>(flags)};
   slot.buffer = buffer;
   slot.request = request;
+  slot.connection = connection_index;
   slot.in_use = true;
   ++_in_flight;
-  _outgoing.push_back(index);
-  wake_writer();
+  Connection &connection = *_connections[connection_index];
+  connection.outgoing.push_back(index);
+  wake_writer(connection);
 }
 
 void Client::complete(uint32_t index, int64_t res) {
@@ -239,7 +280,9 @@ void Client::complete(uint32_t index, int64_t res) {
 // Finishes the requests that can no longer be answered, with the error that
 // broke the connection.
 void Client::fail_everything() {
-  _outgoing.clear();
+  for (auto &connection : _connections) {
+    connection->outgoing.clear();
+  }
   for (uint32_t index = 0; index < _slots.size(); ++index) {
     if (_slots[index].in_use) {
       complete(index, _error != 0 ? _error : -ECONNRESET);
@@ -247,24 +290,25 @@ void Client::fail_everything() {
   }
 }
 
-wheelio::Task<void> Client::write_requests() {
+wheelio::Task<void> Client::write_requests(unsigned int index) {
+  Connection &connection = *_connections[index];
   std::vector<uint32_t> batch;
   std::vector<iovec> iov;
 
   for (;;) {
-    co_await WorkAwaiter(*this);
-    if (_finishing || _outgoing.empty()) {
+    co_await WorkAwaiter(*this, connection);
+    if (_finishing || connection.outgoing.empty()) {
       co_return;
     }
 
     batch.clear();
     iov.clear();
-    while (!_outgoing.empty() && batch.size() < max_batch) {
-      batch.push_back(_outgoing.front());
-      _outgoing.pop_front();
+    while (!connection.outgoing.empty() && batch.size() < max_batch) {
+      batch.push_back(connection.outgoing.front());
+      connection.outgoing.pop_front();
     }
-    for (uint32_t index : batch) {
-      Slot &slot = _slots[index];
+    for (uint32_t slot_index : batch) {
+      Slot &slot = _slots[slot_index];
       iov.push_back({&slot.header, sizeof(slot.header)});
       if (slot.header.op == WHEELIE_OP_WRITE && slot.header.size > 0) {
         iov.push_back({slot.buffer, static_cast<size_t>(slot.header.size)});
@@ -277,7 +321,7 @@ wheelio::Task<void> Client::write_requests() {
         msghdr message = {};
         message.msg_iov = &iov[at];
         message.msg_iovlen = iov.size() - at;
-        size_t sent = co_await _reactor.sendmsg(_fd, &message);
+        size_t sent = co_await _reactor.sendmsg(connection.fd, &message);
 
         // A part of what was left went out; what is left now starts after it.
         while (sent > 0 && at < iov.size()) {
@@ -294,17 +338,18 @@ wheelio::Task<void> Client::write_requests() {
       }
     } catch (...) {
       record_error(error_of(std::current_exception()));
-      _reactor.cancel_fd(_fd);
+      _reactor.cancel_fd(connection.fd);
       co_return;
     }
   }
 }
 
 template <typename Chunks>
-wheelio::Task<void> Client::read_responses(Chunks &chunks) {
+wheelio::Task<void> Client::read_responses(unsigned int index, Chunks &chunks) {
   ResponseParser parser;
-  auto lookup = [this](uint64_t cid) -> std::optional<ResponseTarget> {
-    if (cid >= _slots.size() || !_slots[cid].in_use) {
+  auto lookup = [this, index](uint64_t cid) -> std::optional<ResponseTarget> {
+    if (cid >= _slots.size() || !_slots[cid].in_use ||
+        _slots[cid].connection != index) {
       return std::nullopt;
     }
     Slot &slot = _slots[cid];
@@ -329,26 +374,30 @@ wheelio::Task<void> Client::read_responses(Chunks &chunks) {
   record_error(-ECONNRESET);
 }
 
-wheelio::Task<void> Client::session() {
-  wheelio::Task<void> writer = write_requests();
+wheelio::Task<void> Client::session(unsigned int index) {
+  Connection &connection = *_connections[index];
+  wheelio::Task<void> writer = write_requests(index);
 
   try {
     if (_multishot) {
-      MultishotChunks chunks(_reactor, _fd);
-      co_await read_responses(chunks);
+      MultishotChunks chunks(_reactor, connection.fd);
+      co_await read_responses(index, chunks);
     } else {
-      SingleShotChunks chunks(_reactor, _fd);
-      co_await read_responses(chunks);
+      SingleShotChunks chunks(_reactor, connection.fd);
+      co_await read_responses(index, chunks);
     }
   } catch (...) { // NOLINT: whatever it was is recorded
     record_error(error_of(std::current_exception()));
   }
 
-  // Nothing is received any more, so nothing is worth sending: the writer is
-  // told to finish, and a send that is stuck is cancelled.
+  // Nothing is received on this connection any more, and a client with one
+  // connection broken is broken: the writers are told to finish, and a send
+  // that is stuck is cancelled.
   _finishing = true;
-  _reactor.cancel_fd(_fd);
-  wake_writer();
+  for (auto &other : _connections) {
+    _reactor.cancel_fd(other->fd);
+    wake_writer(*other);
+  }
   co_await writer;
 
   fail_everything();

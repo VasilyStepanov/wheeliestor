@@ -8,7 +8,8 @@ static void on_done(int64_t res, void *data) {
 }
 
 int wheelie_header_is_c(void) {
-  WheelieClientOptions options = {"localhost", 1, WIO_BACKEND_LIBC, false, 4};
+  WheelieClientOptions options = {"localhost", 1, WIO_BACKEND_LIBC,
+                                  false,       4, 1};
   WheelieClient *client = NULL;
   char buf[16];
   int ret = wheelie_client_create(&options, &client);

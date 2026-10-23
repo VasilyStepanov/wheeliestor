@@ -29,6 +29,7 @@ struct wheelie_options {
   void *pad;
   char *backend;
   unsigned int multishot;
+  unsigned int queues;
 };
 
 static struct fio_option options[] = {
@@ -50,6 +51,19 @@ static struct fio_option options[] = {
         .help = "Receive the responses with one multishot receive instead of "
                 "a receive per chunk",
         .def = "0",
+        .category = FIO_OPT_C_ENGINE,
+        .group = FIO_OPT_G_INVALID,
+    },
+    {
+        .name = "wheelie_queues",
+        .lname = "wheelie queues",
+        .type = FIO_OPT_INT,
+        .off1 = offsetof(struct wheelie_options, queues),
+        .minval = 1,
+        .maxval = 64,
+        .help = "Connections to the server, over which the requests are "
+                "spread",
+        .def = "1",
         .category = FIO_OPT_C_ENGINE,
         .group = FIO_OPT_G_INVALID,
     },
@@ -216,6 +230,7 @@ static int fio_wheelie_open_file(struct thread_data *td, struct fio_file *f) {
   client_options.port = port;
   client_options.multishot = o->multishot != 0;
   client_options.depth = td->o.iodepth;
+  client_options.queues = o->queues;
   if (wio_backend_from_name(o->backend ? o->backend : "uring",
                             &client_options.backend) != 0) {
     log_err("wheelie: wheelie_backend must be libc, alibc or uring\n");
