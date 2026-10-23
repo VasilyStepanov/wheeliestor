@@ -16,7 +16,7 @@ The load:
   --bs SIZE         block size (default: 4k)
   --mode MODE       fio's rw: randread, randwrite, read, write, randrw
                     (default: randread)
-  --depth N         requests in flight on a connection (default: 16)
+  --depth N         requests in flight per fio job (default: 16)
   --numjobs N       fio jobs, each with a connection of its own (default: 1)
   --queues N        connections of each fio job, over which its requests are
                     spread (default: 1)
@@ -24,6 +24,11 @@ The load:
   --runtime SEC     measured time (default: 10)
   --ramp SEC        time before the measure, thrown away (default: 3)
   --size SIZE       the range of the file that is read and written (default: 1g)
+  --complete-max N  most completions fio takes in one call (default: fio's 1)
+  --complete-min N  completions fio waits for in one call (default: fio's 1)
+  --submit-batch N  requests fio submits in one batch (default: fio's 1)
+  --server-cpus LIST CPUs allowed to the server, e.g. 8-11 (default: all)
+  --client-cpus LIST CPUs for fio jobs, one per job, e.g. 12-19 (default: all)
 
 The variant, which the server and the client both get:
   --backend NAME    libc, alibc or uring (default: uring)
@@ -46,6 +51,7 @@ USAGE
 
 bs=4k mode=randread depth=16 numjobs=1 queues=1 sync=0 runtime=10 ramp=3 size=1g
 backend=uring multishot=0 direct=1 threads=""
+complete_max="" complete_min="" submit_batch="" server_cpus="" client_cpus=""
 name="" out=results build=1 keep=0
 
 while [ $# -gt 0 ]; do
@@ -59,6 +65,11 @@ while [ $# -gt 0 ]; do
     --runtime) runtime=$2; shift 2 ;;
     --ramp) ramp=$2; shift 2 ;;
     --size) size=$2; shift 2 ;;
+    --complete-max) complete_max=$2; shift 2 ;;
+    --complete-min) complete_min=$2; shift 2 ;;
+    --submit-batch) submit_batch=$2; shift 2 ;;
+    --server-cpus) server_cpus=$2; shift 2 ;;
+    --client-cpus) client_cpus=$2; shift 2 ;;
     --backend) backend=$2; shift 2 ;;
     --multishot) multishot=1; shift ;;
     --direct) direct=$2; shift 2 ;;
@@ -80,6 +91,32 @@ case $direct in
 0 | 1) ;;
 *) echo "bench/run.sh: --direct must be 0 or 1" >&2; exit 2 ;;
 esac
+
+fio_options=()
+if [ -n "$complete_max" ]; then
+    if ! [[ $complete_max =~ ^[1-9][0-9]*$ ]]; then
+        echo "bench/run.sh: --complete-max must be a positive number" >&2
+        exit 2
+    fi
+    fio_options+=(--iodepth_batch_complete_max="$complete_max")
+fi
+if [ -n "$complete_min" ]; then
+    if ! [[ $complete_min =~ ^[0-9]+$ ]]; then
+        echo "bench/run.sh: --complete-min must be a non-negative number" >&2
+        exit 2
+    fi
+    fio_options+=(--iodepth_batch_complete_min="$complete_min")
+fi
+if [ -n "$submit_batch" ]; then
+    if ! [[ $submit_batch =~ ^[1-9][0-9]*$ ]]; then
+        echo "bench/run.sh: --submit-batch must be a positive number" >&2
+        exit 2
+    fi
+    fio_options+=(--iodepth_batch_submit="$submit_batch")
+fi
+if [ -n "$client_cpus" ]; then
+    fio_options+=(--cpus_allowed="$client_cpus" --cpus_allowed_policy=split)
+fi
 
 DOCKER=${DOCKER:-docker}
 cd "$(dirname "$0")/.."
@@ -145,6 +182,8 @@ WHEELIE_THREADS=$threads
 WHEELIE_QUEUE_DEPTH=$queue_depth
 WHEELIE_FILE_SIZE_MB=$file_mb
 WHEELIE_RESULTS=$out_abs
+WHEELIE_SERVER_CPUS=$server_cpus
+WHEELIE_CLIENT_CPUS=$client_cpus
 ENV
 
 compose() { $DOCKER compose --env-file "$env_file" "$@"; }
@@ -156,6 +195,8 @@ cleanup() {
     rm -f "$env_file"
 }
 trap cleanup EXIT
+
+cp "$env_file" "$out_abs/$name.settings"
 
 if [ "$build" = 1 ]; then
     echo "== building the images"
@@ -193,6 +234,7 @@ compose run --rm -T --user "$(id -u):$(id -g)" client \
     --sync="$sync" --size="$size" \
     --runtime="$runtime" --ramp_time="$ramp" --time_based \
     --thread --group_reporting \
+    "${fio_options[@]}" \
     --output-format=normal,json --output="$raw"
 
 # fio wrote its normal output and its JSON into one file: they are told apart

@@ -48,7 +48,9 @@ def size_bytes(text):
 
 
 class Result:
-    def __init__(self, job, timestamp):
+    def __init__(self, job, timestamp, settings=None):
+        if job.get("error", 0):
+            raise ValueError("fio job failed: error %s" % job["error"])
         options = job["job options"]
         backend = options.get("wheelie_backend")
         if backend is None:
@@ -61,6 +63,24 @@ class Result:
         self.numjobs = int(options["numjobs"])
         self.sync = int(options.get("sync", "0") or 0)
         self.timestamp = timestamp
+        settings = settings or {}
+        complete_min = int(options.get("iodepth_batch_complete_min", "1"))
+        complete_max = max(complete_min, int(options.get("iodepth_batch_complete_max", "0")))
+        submit = int(options.get("iodepth_batch", options.get("iodepth_batch_submit", "1")))
+        parameters = [
+            ("queues", int(options.get("wheelie_queues", "1")), 1),
+            ("submit", submit or self.depth, 1),
+            ("complete-min", complete_min, 1),
+            ("complete-max", complete_max, 1),
+            ("client-cpus", options.get("cpus_allowed", ""), ""),
+            ("server-cpus", settings.get("WHEELIE_SERVER_CPUS", ""), ""),
+            ("threads", settings.get("WHEELIE_THREADS", ""), ""),
+            ("direct", settings.get("WHEELIE_DIRECT", "1"), "1"),
+        ]
+        if options.get("cpus_allowed"):
+            parameters.append(("cpu-policy", options.get("cpus_allowed_policy", "shared"), ""))
+        self.parameters = tuple((key, str(value)) for key, value, default in parameters
+                                if value != default)
 
         self.iops = 0.0
         self.mibs = 0.0
@@ -78,21 +98,25 @@ class Result:
 
     @property
     def load(self):
-        return (self.rw, self.bs, self.depth, self.numjobs, self.sync)
+        base = (self.rw, self.bs, self.depth, self.numjobs, self.sync)
+        return base + (self.parameters,) if self.parameters else base
 
     def cell(self):
         return "%d / %.1f / %.1f%%" % (round(self.iops), self.mibs, self.spread)
 
 
 def load_label(load):
-    rw, bs, depth, numjobs, sync = load
-    return "%s %s qd%d nj%d%s" % (rw, bs, depth, numjobs, " sync" if sync else "")
+    rw, bs, depth, numjobs, sync = load[:5]
+    label = "%s %s qd%d nj%d%s" % (rw, bs, depth, numjobs, " sync" if sync else "")
+    if len(load) > 5:
+        label += " " + " ".join("%s=%s" % item for item in load[5])
+    return label
 
 
 def load_sort_key(load):
-    rw, bs, depth, numjobs, sync = load
+    rw, bs, depth, numjobs, sync = load[:5]
     rank = RW_ORDER.index(rw) if rw in RW_ORDER else len(RW_ORDER)
-    return (rank, size_bytes(bs), depth, numjobs, sync)
+    return (rank, size_bytes(bs), depth, numjobs, sync, load[5:])
 
 
 def read_results(paths):
@@ -109,7 +133,13 @@ def read_results(paths):
         try:
             with open(path) as handle:
                 data = json.load(handle)
-            result = Result(data["jobs"][0], data.get("timestamp_ms", 0))
+            settings = {}
+            settings_path = os.path.splitext(path)[0] + ".settings"
+            if os.path.isfile(settings_path):
+                with open(settings_path) as handle:
+                    settings = dict(line.rstrip("\n").split("=", 1)
+                                    for line in handle if "=" in line)
+            result = Result(data["jobs"][0], data.get("timestamp_ms", 0), settings)
         except (ValueError, KeyError, IndexError) as error:
             print("report.py: skipping %s: %s" % (path, error), file=sys.stderr)
             continue
