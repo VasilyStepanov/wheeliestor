@@ -1,4 +1,5 @@
-EXTRA_DIST = matrix.sh \
+EXTRA_DIST = ceiling.sh \
+             matrix.sh \
              report.py \
              run.sh \
              tests/test_report.py
