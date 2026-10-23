@@ -23,6 +23,7 @@
 #include <netinet/tcp.h>
 #include <sys/socket.h>
 #include <sys/uio.h>
+#include <unistd.h>
 
 namespace wheelie {
 
@@ -264,6 +265,7 @@ wheelio::Task<void> serve_connection(WorkerContext &context, int fd) {
 } // namespace
 
 wheelio::Task<void> accept_loop(WorkerContext &context) {
+  size_t next = 0;
   while (!context.stopping.load(std::memory_order_relaxed)) {
     int fd;
     try {
@@ -281,7 +283,47 @@ wheelio::Task<void> accept_loop(WorkerContext &context) {
 
     int one = 1;
     setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
-    wheelio::spawn(serve_connection(context, fd));
+
+    size_t target = next++;
+    if (!context.handoff_out.empty()) {
+      target %= context.handoff_out.size();
+    }
+    if (target == 0 || context.handoff_out.empty()) {
+      wheelio::spawn(serve_connection(context, fd));
+    } else if (::send(context.handoff_out[target], &fd, sizeof(fd),
+                      MSG_NOSIGNAL | MSG_DONTWAIT) !=
+               static_cast<ssize_t>(sizeof(fd))) {
+      ::close(fd);
+    }
+  }
+}
+
+wheelio::Task<void> receive_loop(WorkerContext &context) {
+  // A stream does not keep the descriptors apart: what is left of one at the
+  // end of a read is the start of the next.
+  char buffer[16 * sizeof(int)];
+  size_t have = 0;
+  while (!context.stopping.load(std::memory_order_relaxed)) {
+    size_t got;
+    try {
+      got = co_await context.reactor.recv(context.handoff_in, buffer + have,
+                                          sizeof(buffer) - have);
+    } catch (const std::system_error &) {
+      co_return;
+    }
+    if (got == 0) {
+      co_return;
+    }
+    have += got;
+
+    size_t used = 0;
+    for (; used + sizeof(int) <= have; used += sizeof(int)) {
+      int fd;
+      std::memcpy(&fd, buffer + used, sizeof(fd));
+      wheelio::spawn(serve_connection(context, fd));
+    }
+    std::memmove(buffer, buffer + used, have - used);
+    have -= used;
   }
 }
 

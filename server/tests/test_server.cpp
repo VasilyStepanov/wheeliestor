@@ -109,6 +109,14 @@ public:
     return ::recv(_fd, &byte, 1, 0) == 0;
   }
 
+  // The server has ended the connection, with an end of the stream or, if it
+  // had not accepted it yet, a reset.
+  bool ended_by_server() {
+    char byte;
+    ssize_t n = ::recv(_fd, &byte, 1, 0);
+    return n == 0 || (n < 0 && errno == ECONNRESET);
+  }
+
 private:
   bool read_exactly(void *buffer, size_t size) {
     size_t got = 0;
@@ -441,6 +449,49 @@ TEST_P(ServerTest, ConnectionsDoNotGetInEachOthersWay) {
   }
   for (int i = count - 1; i >= 0; --i) {
     EXPECT_EQ(clients[i]->read_response().data, data[i]) << i;
+  }
+}
+
+// The connections that are made together reach the reactors one by one, and
+// each of them is served whichever reactor it is given to.
+TEST_P(ServerTest, ManyConnectionsMadeTogetherAreAllServed) {
+  constexpr int count = 24;
+  std::vector<std::unique_ptr<Client>> clients;
+  for (int i = 0; i < count; ++i) {
+    clients.push_back(std::make_unique<Client>(_port));
+  }
+  std::vector<std::vector<char>> data;
+  for (int i = 0; i < count; ++i) {
+    data.push_back(pattern(4096, 40 + i));
+    clients[i]->send_request(1, WHEELIE_OP_WRITE, i * 4096, 4096, data[i]);
+  }
+  for (int i = 0; i < count; ++i) {
+    EXPECT_EQ(clients[i]->read_response().res, 4096) << i;
+  }
+  for (int i = 0; i < count; ++i) {
+    clients[i]->send_request(2, WHEELIE_OP_READ, i * 4096, 4096);
+  }
+  for (int i = 0; i < count; ++i) {
+    EXPECT_EQ(clients[i]->read_response().data, data[i]) << i;
+  }
+}
+
+// A connection that is still on its way to a reactor when the server stops is
+// closed, like the others.
+TEST_P(ServerTest, StopsWithConnectionsOnTheirWayToTheReactors) {
+  constexpr int count = 24;
+  std::vector<std::unique_ptr<Client>> clients;
+  for (int i = 0; i < count; ++i) {
+    clients.push_back(std::make_unique<Client>(_port));
+  }
+
+  auto started = std::chrono::steady_clock::now();
+  _server->stop();
+  EXPECT_LT(std::chrono::steady_clock::now() - started,
+            std::chrono::seconds(3));
+
+  for (int i = 0; i < count; ++i) {
+    EXPECT_TRUE(clients[i]->ended_by_server()) << i;
   }
 }
 
