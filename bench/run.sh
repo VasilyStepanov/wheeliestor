@@ -123,7 +123,8 @@ cd "$(dirname "$0")/.."
 
 # fio's size, in MiB, rounded up.
 to_mb() {
-    local text=${1,,} number unit
+    local text number unit
+    text=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')
     number=${text//[^0-9]/}
     unit=${text//[0-9]/}
     case $unit in
@@ -234,7 +235,7 @@ compose run --rm -T --user "$(id -u):$(id -g)" client \
     --sync="$sync" --size="$size" \
     --runtime="$runtime" --ramp_time="$ramp" --time_based \
     --thread --group_reporting \
-    "${fio_options[@]}" \
+    ${fio_options[@]+"${fio_options[@]}"} \
     --output-format=normal,json --output="$raw"
 
 # fio wrote its normal output and its JSON into one file: they are told apart
