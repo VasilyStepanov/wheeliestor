@@ -143,7 +143,7 @@ static long long milliseconds_since(const struct timespec *start) {
 static int fio_wheelie_getevents(struct thread_data *td, unsigned int min,
                                  unsigned int max, const struct timespec *t) {
   struct wheelie_data *wd = td->io_ops_data;
-  struct timespec start;
+  struct timespec start = {0, 0};
   long long limit_ms = -1;
   int ret;
 
@@ -165,8 +165,9 @@ static int fio_wheelie_getevents(struct thread_data *td, unsigned int min,
     return wd->nr_returned;
   }
 
-  clock_gettime(CLOCK_MONOTONIC, &start);
+  /* The time is only needed to keep a timeout that fio gave. */
   if (t) {
+    clock_gettime(CLOCK_MONOTONIC, &start);
     limit_ms = (long long)t->tv_sec * 1000 + t->tv_nsec / 1000000;
   }
 
