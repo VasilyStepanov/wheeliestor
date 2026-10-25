@@ -284,6 +284,13 @@ wheelio::Task<void> accept_loop(WorkerContext &context) {
     int one = 1;
     setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
 
+    // A connection accepted while the reactor is draining would be missed by
+    // the cancellation of the ones it has.
+    if (context.stopping.load(std::memory_order_relaxed)) {
+      ::close(fd);
+      co_return;
+    }
+
     size_t target = next++;
     if (!context.handoff_out.empty()) {
       target %= context.handoff_out.size();
@@ -320,7 +327,12 @@ wheelio::Task<void> receive_loop(WorkerContext &context) {
     for (; used + sizeof(int) <= have; used += sizeof(int)) {
       int fd;
       std::memcpy(&fd, buffer + used, sizeof(fd));
-      wheelio::spawn(serve_connection(context, fd));
+      // Likewise for one that arrives while the reactor is draining.
+      if (context.stopping.load(std::memory_order_relaxed)) {
+        ::close(fd);
+      } else {
+        wheelio::spawn(serve_connection(context, fd));
+      }
     }
     std::memmove(buffer, buffer + used, have - used);
     have -= used;
