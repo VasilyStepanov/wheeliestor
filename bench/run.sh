@@ -47,6 +47,16 @@ The run:
   --out DIR         where the results go (default: results)
   --no-build        do not build the images
   --keep            leave the containers running afterwards
+  --profile         record the server and the fio with perf for a part of the
+                    measured time and keep the shares of the layers of the path
+                    of a request in NAME.profile.json (Linux, needs perf, and
+                    root or `sudo -n`; see bench/layers.py)
+  --profile-window SEC
+                    how long to record (default: 15, and not more than the
+                    measured time less 2)
+  --submit URL      send the result to a server of results when the run is
+                    over (see bench/submit.py; the code of the event is in
+                    WHEELIE_RESULTS_CODE)
   -h, --help        show this help and exit
 
 Environment:
@@ -59,6 +69,7 @@ bs=4k mode=randread depth=16 numjobs=1 queues=1 sync=0 runtime=10 ramp=3 size=1g
 backend=uring multishot=0 direct=1 data=disk threads=""
 complete_max="" complete_min="" submit_batch="" server_cpus="" client_cpus=""
 name="" out=results build=1 keep=0
+profile=0 profile_window="" submit_url=""
 extra_fio=()
 
 while [ $# -gt 0 ]; do
@@ -76,6 +87,9 @@ while [ $# -gt 0 ]; do
     --complete-min) complete_min=$2; shift 2 ;;
     --submit-batch) submit_batch=$2; shift 2 ;;
     --fio-arg) extra_fio+=("$2"); shift 2 ;;
+    --profile) profile=1; shift ;;
+    --profile-window) profile_window=$2; shift 2 ;;
+    --submit) submit_url=$2; shift 2 ;;
     --server-cpus) server_cpus=$2; shift 2 ;;
     --client-cpus) client_cpus=$2; shift 2 ;;
     --backend) backend=$2; shift 2 ;;
@@ -157,6 +171,27 @@ to_mb() {
 
 size_mb=$(to_mb "$size")
 file_mb=$((size_mb > 2048 ? size_mb : 2048))
+
+if [ "$profile" = 1 ]; then
+    if [ -z "$profile_window" ]; then
+        profile_window=15
+        [ $((runtime - 2)) -lt "$profile_window" ] && profile_window=$((runtime - 2))
+    fi
+    case $profile_window in
+    '' | *[!0-9]* | 0)
+        echo "bench/run.sh: --profile-window must be a positive number" >&2
+        exit 2
+        ;;
+    esac
+    if [ "$profile_window" -gt $((runtime - 2)) ] || [ "$profile_window" -lt 1 ]; then
+        echo "bench/run.sh: --profile needs a measured time (--runtime) of at least window + 2 seconds" >&2
+        exit 2
+    fi
+    if ! command -v perf > /dev/null 2>&1; then
+        echo "bench/run.sh: --profile needs perf" >&2
+        exit 2
+    fi
+fi
 
 case $queues in
 '' | *[!0-9]* | 0)
@@ -265,19 +300,57 @@ fi
 
 echo "== fio: $mode bs=$bs depth=$depth numjobs=$numjobs queues=$queues sync=$sync, ${ramp}s ramp and ${runtime}s measured"
 raw="/results/$name.out"
-compose run --rm -T --user "$(id -u):$(id -g)" client \
-    fio --name="$name" \
-    --ioengine=external:/usr/local/lib/wheelie.so \
-    --filename='wheelie\://server\:39900' \
-    --wheelie_backend="$backend" --wheelie_multishot="$multishot" \
-    --rw="$mode" --bs="$bs" --iodepth="$depth" --numjobs="$numjobs" \
-    --wheelie_queues="$queues" \
-    --sync="$sync" --size="$size" \
-    --runtime="$runtime" --ramp_time="$ramp" --time_based \
-    --thread --group_reporting \
-    ${fio_options[@]+"${fio_options[@]}"} \
-    ${extra_fio[@]+"${extra_fio[@]}"} \
-    --output-format=normal,json --output="$raw"
+run_fio() {
+    compose run --rm -T --user "$(id -u):$(id -g)" client \
+        fio --name="$name" \
+        --ioengine=external:/usr/local/lib/wheelie.so \
+        --filename='wheelie\://server\:39900' \
+        --wheelie_backend="$backend" --wheelie_multishot="$multishot" \
+        --rw="$mode" --bs="$bs" --iodepth="$depth" --numjobs="$numjobs" \
+        --wheelie_queues="$queues" \
+        --sync="$sync" --size="$size" \
+        --runtime="$runtime" --ramp_time="$ramp" --time_based \
+        --thread --group_reporting \
+        ${fio_options[@]+"${fio_options[@]}"} \
+        ${extra_fio[@]+"${extra_fio[@]}"} \
+        --output-format=normal,json --output="$raw"
+}
+
+# A command that may need root: perf of the processes of the containers does.
+privileged() {
+    if [ "$(id -u)" = 0 ]; then "$@"; else sudo -n "$@"; fi
+}
+
+# The server and fio run in the containers, and the host sees them as
+# processes: perf records them from outside, for a window after the ramp.
+record_profile() {
+    local server_pid="" fio_pid="" i
+    for i in $(seq 1 120); do
+        server_pid=$(pgrep -xo wheelie-server || true)
+        fio_pid=$(pgrep -xn fio || true)
+        [ -n "$server_pid" ] && [ -n "$fio_pid" ] && break
+        sleep 0.5
+    done
+    if [ -z "$server_pid" ] || [ -z "$fio_pid" ]; then
+        echo "bench/run.sh: the processes of the server and of fio are not found, no profile" >&2
+        return 1
+    fi
+    sleep $((ramp + 1))
+    echo "== perf: recording the server ($server_pid) and fio ($fio_pid) for ${profile_window}s"
+    privileged perf record -q -F 1999 -p "$server_pid" -o "$out_abs/$name.server.perf" -- sleep "$profile_window" > /dev/null 2>&1 &
+    local server_perf=$!
+    privileged perf record -q -F 1999 -p "$fio_pid" -o "$out_abs/$name.client.perf" -- sleep "$profile_window" > /dev/null 2>&1 &
+    wait "$server_perf" "$!" 2> /dev/null || true
+}
+
+if [ "$profile" = 1 ]; then
+    run_fio &
+    fio_run_pid=$!
+    record_profile || true
+    wait "$fio_run_pid"
+else
+    run_fio
+fi
 
 # fio wrote its normal output and its JSON into one file: they are told apart
 # by the braces of the JSON.
@@ -307,4 +380,29 @@ for direction in ("read", "write"):
         clat["mean"] / 1000, clat["percentile"]["99.000000"] / 1000))
 PY
 fi
+here=$(cd "$(dirname "$0")" && pwd)
+
+if [ "$profile" = 1 ]; then
+    if [ -f "$out_abs/$name.server.perf" ] || [ -f "$out_abs/$name.client.perf" ]; then
+        # perf report needs the same rights as perf record had.
+        if privileged python3 -I "$here/layers.py" build --window "$profile_window" --fio "$out_abs/$name.json" \
+            --server "$out_abs/$name.server.perf" --client "$out_abs/$name.client.perf" \
+            --out "$out_abs/$name.profile.json"; then
+            privileged chown "$(id -u):$(id -g)" "$out_abs/$name.profile.json" 2> /dev/null || true
+            privileged rm -f "$out_abs/$name.server.perf" "$out_abs/$name.client.perf"
+            echo "profile: $out/$name.profile.json"
+        else
+            echo "bench/run.sh: the profile was not made; the recordings are $out/$name.*.perf" >&2
+        fi
+    else
+        echo "bench/run.sh: no recordings of perf, no profile" >&2
+    fi
+fi
+
 echo "results: $out/$name.txt, $out/$name.json, $out/$name.server"
+
+if [ -n "$submit_url" ]; then
+    # A result that is not sent is not a failed run: it stays in the directory.
+    python3 -I "$here/submit.py" --url "$submit_url" "$out_abs/$name.json" \
+        || echo "bench/run.sh: the result was not submitted; bench/submit.py can send it later" >&2
+fi

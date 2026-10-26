@@ -1,8 +1,12 @@
 EXTRA_DIST = ceiling.sh \
+             layers.py \
              matrix.sh \
              report.py \
              run.sh \
-             tests/test_report.py
+             submit.py \
+             tests/test_layers.py \
+             tests/test_report.py \
+             tests/test_submit.py
 
 
 # The scripts need python3 for their report, and so do their tests.

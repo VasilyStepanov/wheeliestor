@@ -1,0 +1,444 @@
+#!/usr/bin/env python3
+"""Sends the results of bench/run.sh to a server of results.
+
+    bench/submit.py --url http://results.example:8080 --code THE-CODE results/matrix
+
+What is sent for a result, from the files that bench/run.sh keeps next to it:
+
+  * the JSON of fio, whole;
+  * the parameters of the run (the options fio recorded, the settings of the
+    stand, the line the server printed on start);
+  * the parameters of the machine: the kernel, the processor, the memory, the
+    disks, the network cards, the virtualization, docker;
+  * the profile, if there is a `<name>.profile.json` (bench/run.sh --profile),
+    that is where the time goes.
+
+The machine is told apart by a client id: a random number that this script
+makes the first time and keeps in ~/.local/state/wheeliestor/client-id. The
+name of the host does not leave the machine, only a hash of it. The server
+answers with a name that is made of the id, and the script prints it with a
+link, so that the results can be found in the server.
+
+The server takes a result with a token. The script gets it for a code (the
+code of an event, which the organizer gives) and keeps nothing: the token lives
+for a couple of hours. The server slows down the clients that submit too fast,
+and the script waits as long as it is told to.
+
+With --dry-run nothing is sent: the script says what it would send.
+
+Environment:
+  WHEELIE_RESULTS_URL    the address of the server (instead of --url)
+  WHEELIE_RESULTS_CODE   the code of the event (instead of --code)
+  WHEELIE_RESULTS_TOKEN  a token, if you have one (instead of --code)
+  DOCKER                 the docker command, as for bench/run.sh
+"""
+
+import argparse
+import datetime
+import glob
+import hashlib
+import json
+import os
+import platform
+import re
+import shlex
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
+import uuid
+
+SCHEMA = 1
+LAYER_NAMES = ("network", "copies", "storage", "io_uring", "scheduler", "code", "other")
+
+# The options of fio that are the parameters of the run itself; the rest of
+# the options fio recorded go to the server as they are, for the record.
+KNOWN_OPTIONS = {
+    "name", "ioengine", "filename", "wheelie_backend", "wheelie_multishot", "wheelie_queues", "rw", "bs",
+    "iodepth", "numjobs", "sync", "size", "runtime", "ramp_time", "time_based", "thread", "group_reporting",
+}
+
+
+# ---------------------------------------------------------------- the machine
+
+def run_text(command, env=None):
+    """The output of a command, or None if it cannot be run or fails."""
+    try:
+        out = subprocess.run(command, capture_output=True, text=True, timeout=20, env=env)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return out.stdout.strip() if out.returncode == 0 else None
+
+
+def read_text(path):
+    try:
+        with open(path) as handle:
+            return handle.read().strip()
+    except OSError:
+        return None
+
+
+def state_dir():
+    base = os.environ.get("XDG_STATE_HOME") or os.path.join(os.path.expanduser("~"), ".local", "state")
+    return os.path.join(base, "wheeliestor")
+
+
+def client_id(directory=None):
+    """The random id of this client: made once, and kept."""
+    directory = directory or state_dir()
+    path = os.path.join(directory, "client-id")
+    known = read_text(path)
+    if known and re.fullmatch(r"[0-9a-f]{32}", known):
+        return known
+    value = uuid.uuid4().hex
+    os.makedirs(directory, exist_ok=True)
+    with open(path, "w") as handle:
+        handle.write(value + "\n")
+    return value
+
+
+def host_hash():
+    return hashlib.sha256(platform.node().encode()).hexdigest()[:16]
+
+
+def parse_lscpu(text):
+    found = {}
+    for line in (text or "").splitlines():
+        key, _, value = line.partition(":")
+        found[key.strip()] = value.strip()
+    return found
+
+
+def cpu_info():
+    info = parse_lscpu(run_text(["lscpu"], env=dict(os.environ, LC_ALL="C")))
+    model = info.get("Model name")
+    if not model:
+        for line in (read_text("/proc/cpuinfo") or "").splitlines():
+            if line.lower().startswith("model name"):
+                model = line.partition(":")[2].strip()
+                break
+    if not model:
+        model = run_text(["sysctl", "-n", "machdep.cpu.brand_string"]) or platform.processor() or "unknown"
+
+    def number(key):
+        value = info.get(key, "")
+        return int(value) if value.isdigit() else None
+
+    return {
+        "cpu_model": model[:128],
+        "cpus": os.cpu_count() or 1,
+        "threads_per_core": number("Thread(s) per core"),
+        "sockets": number("Socket(s)"),
+        "numa_nodes": number("NUMA node(s)"),
+    }
+
+
+def memory_mb():
+    for line in (read_text("/proc/meminfo") or "").splitlines():
+        if line.startswith("MemTotal:"):
+            return int(line.split()[1]) // 1024
+    value = run_text(["sysctl", "-n", "hw.memsize"])
+    return int(value) // (1024 * 1024) if value and value.isdigit() else 64
+
+
+def os_name():
+    for line in (read_text("/etc/os-release") or "").splitlines():
+        if line.startswith("PRETTY_NAME="):
+            return line.partition("=")[2].strip().strip('"')[:128]
+    return platform.platform()[:128]
+
+
+def disks():
+    text = run_text(["lsblk", "-J", "-b", "-d", "-o", "NAME,SIZE,TYPE,MODEL,ROTA"])
+    found = []
+    try:
+        devices = json.loads(text)["blockdevices"] if text else []
+    except (ValueError, KeyError):
+        devices = []
+    for device in devices:
+        if device.get("type") != "disk" or device["name"].startswith(("loop", "ram", "zram")):
+            continue
+        name = device["name"]
+        size = device.get("size")
+        rotational = device.get("rota")
+        found.append({
+            "name": name[:64],
+            "size_bytes": int(size) if size is not None else None,
+            "model": (device.get("model") or "").strip()[:128] or None,
+            "rotational": bool(int(rotational)) if rotational is not None else None,
+            "scheduler": (read_text("/sys/block/%s/queue/scheduler" % name) or "").split("[")[-1].split("]")[0][:64] or None,
+        })
+    return found[:64]
+
+
+def nics():
+    found = []
+    for path in sorted(glob.glob("/sys/class/net/*")):
+        name = os.path.basename(path)
+        if name == "lo" or name.startswith(("veth", "br-", "docker")):
+            continue
+        speed = read_text(path + "/speed")
+        driver = os.path.basename(os.path.realpath(path + "/device/driver")) if os.path.exists(path + "/device/driver") else None
+        found.append({
+            "name": name[:64],
+            "speed_mbps": int(speed) if speed and speed.lstrip("-").isdigit() and int(speed) > 0 else None,
+            "driver": driver[:64] if driver else None,
+        })
+    return found[:64]
+
+
+def docker_version():
+    command = shlex.split(os.environ.get("DOCKER", "docker")) + ["version", "--format", "{{.Server.Version}}"]
+    return (run_text(command) or "")[:64] or None
+
+
+def collect_machine(directory=None):
+    machine = {
+        "client_id": client_id(directory),
+        "host_hash": host_hash(),
+        "os": os_name(),
+        "kernel": platform.release()[:128],
+        "arch": platform.machine()[:32],
+        "memory_mb": memory_mb(),
+        "virt": (run_text(["systemd-detect-virt"]) or None),
+        "docker": docker_version(),
+        "governor": read_text("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor"),
+        "disks": disks(),
+        "nics": nics(),
+    }
+    machine.update(cpu_info())
+    return {key: value for key, value in machine.items() if value not in (None, "")}
+
+
+# ------------------------------------------------------------------ a result
+
+def read_json(path):
+    """The JSON of fio, which may have a warning of fio in front of it."""
+    with open(path) as handle:
+        text = handle.read()
+    return json.loads(text[text.index("{"):])
+
+
+def read_settings(path):
+    found = {}
+    for line in (read_text(path) or "").splitlines():
+        key, sep, value = line.partition("=")
+        if sep:
+            found[key.strip()] = value.strip()
+    return found
+
+
+def iso(seconds):
+    return datetime.datetime.fromtimestamp(seconds, datetime.timezone.utc).isoformat()
+
+
+def build_submission(json_path, machine):
+    """A submission from `<name>.json` and the files next to it. Raises ValueError."""
+    base = json_path[: -len(".json")]
+    fio = read_json(json_path)
+    jobs = fio.get("jobs") or []
+    if not jobs:
+        raise ValueError("no jobs in the JSON of fio")
+    job = jobs[0]
+    if job.get("error", 0):
+        raise ValueError("the job of fio failed: error %s" % job["error"])
+    options = job.get("job options", {})
+    if "wheelie_backend" not in options:
+        raise ValueError("not a result of the wheelie engine")
+    settings = read_settings(base + ".settings")
+    banner = read_text(base + ".server")
+
+    threads = None
+    found = re.search(r"(\d+) threads", banner or "")
+    if found:
+        threads = int(found.group(1))
+    elif settings.get("WHEELIE_THREADS", "").isdigit():
+        threads = int(settings["WHEELIE_THREADS"])
+
+    run = {
+        "name": options.get("name", os.path.basename(base))[:200],
+        "mode": options["rw"],
+        "bs": options["bs"],
+        "depth": int(options["iodepth"]),
+        "numjobs": int(options.get("numjobs", 1)),
+        "queues": int(options.get("wheelie_queues", 1)),
+        "sync": int(options.get("sync", 0) or 0),
+        "runtime": int(options["runtime"]),
+        "ramp": int(options.get("ramp_time", 0) or 0),
+        "size": options["size"],
+        "backend": options["wheelie_backend"],
+        "multishot": options.get("wheelie_multishot", "0") not in ("0", ""),
+        "direct": settings.get("WHEELIE_DIRECT", "1") != "0",
+        "data": settings.get("WHEELIE_DATA") or "disk",
+        "transport": settings.get("WHEELIE_TRANSPORT") or "tcp",
+        "options": {k: str(v)[:256] for k, v in options.items() if k not in KNOWN_OPTIONS and v != ""},
+    }
+    for key, name in (("server_cpus", "WHEELIE_SERVER_CPUS"), ("client_cpus", "WHEELIE_CLIENT_CPUS")):
+        if settings.get(name):
+            run[key] = settings[name]
+    if threads:
+        run["threads"] = threads
+
+    stats = job["read"] if job["read"].get("io_bytes") else job["write"]
+    ended = fio.get("timestamp") or time.time()
+    started = ended - (stats.get("runtime", 0) / 1000.0)
+
+    body = {
+        "schema": SCHEMA,
+        "started_at": iso(started),
+        "run": run,
+        "fio": fio,
+        "machine": machine,
+        "tool": {"name": "wheeliestor", "version": git_version()},
+    }
+    if banner:
+        body["server"] = banner[:500]
+    profile = base + ".profile.json"
+    if os.path.exists(profile):
+        body["profile"] = read_json(profile)
+    return body
+
+
+def git_version():
+    here = os.path.dirname(os.path.abspath(__file__))
+    return (run_text(["git", "-C", here, "rev-parse", "--short=12", "HEAD"]) or None)
+
+
+def find_results(paths):
+    """The `.json` files of results under the paths, in the order of their time."""
+    found = []
+    for path in paths:
+        if os.path.isdir(path):
+            found += glob.glob(os.path.join(path, "**", "*.json"), recursive=True)
+        else:
+            found.append(path)
+    found = [p for p in found if not p.endswith((".profile.json", "summary.json"))]
+    return sorted(found)
+
+
+# -------------------------------------------------------------------- server
+
+class Refused(Exception):
+    def __init__(self, status, message, problems=None):
+        super().__init__(message)
+        self.status = status
+        self.problems = problems or []
+
+
+class Server:
+    def __init__(self, url, code=None, token=None, sleep=time.sleep):
+        self.url = url.rstrip("/")
+        self.code = code
+        self.token = token
+        self.sleep = sleep
+
+    def call(self, method, path, body=None, auth=False):
+        data = json.dumps(body).encode() if body is not None else None
+        request = urllib.request.Request(self.url + path, data=data, method=method)
+        request.add_header("Content-Type", "application/json")
+        if auth and self.token:
+            request.add_header("Authorization", "Bearer " + self.token)
+        try:
+            with urllib.request.urlopen(request, timeout=60) as response:
+                return json.loads(response.read() or b"{}")
+        except urllib.error.HTTPError as error:
+            raw = error.read()
+            try:
+                detail = json.loads(raw)
+            except ValueError:
+                detail = {"detail": raw.decode(errors="replace")[:200]}
+            refused = Refused(error.code, str(detail.get("detail", error.reason)), detail.get("problems"))
+            refused.retry_after = error.headers.get("Retry-After")
+            raise refused from None
+
+    def login(self):
+        if not self.code:
+            raise Refused(401, "no token and no code: give --code or set WHEELIE_RESULTS_CODE")
+        self.token = self.call("POST", "/api/token", {"code": self.code})["token"]
+
+    def submit(self, body, waits=20):
+        """Sends one result. Waits when the server says to, logs in again when the token has expired."""
+        relogged = False
+        while True:
+            if not self.token:
+                self.login()
+            try:
+                return self.call("POST", "/api/results", body, auth=True)
+            except Refused as refused:
+                if refused.status == 401 and self.code and not relogged:
+                    self.token, relogged = None, True
+                    continue
+                if refused.status == 429 and waits > 0:
+                    waits -= 1
+                    self.sleep(min(float(getattr(refused, "retry_after", None) or 2), 120))
+                    continue
+                raise
+
+
+# ---------------------------------------------------------------------- main
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description="Sends the results of bench/run.sh to a server of results.",
+                                     epilog="See the head of this file for what is sent.")
+    parser.add_argument("paths", nargs="+", help="directories of results or .json files of fio")
+    parser.add_argument("--url", default=os.environ.get("WHEELIE_RESULTS_URL"), help="the address of the server")
+    parser.add_argument("--code", default=os.environ.get("WHEELIE_RESULTS_CODE"), help="the code of the event")
+    parser.add_argument("--token", default=os.environ.get("WHEELIE_RESULTS_TOKEN"), help="a token, instead of the code")
+    parser.add_argument("--dry-run", action="store_true", help="say what would be sent and send nothing")
+    args = parser.parse_args(argv)
+
+    files = find_results(args.paths)
+    if not files:
+        print("bench/submit.py: no results in %s" % " ".join(args.paths), file=sys.stderr)
+        return 2
+    if not args.dry_run and not args.url:
+        print("bench/submit.py: give --url or set WHEELIE_RESULTS_URL", file=sys.stderr)
+        return 2
+
+    machine = collect_machine()
+    server = None if args.dry_run else Server(args.url, code=args.code, token=args.token)
+    sent = stored = failed = 0
+    identity = None
+    for path in files:
+        try:
+            body = build_submission(path, machine)
+        except (ValueError, KeyError, OSError) as error:
+            print("skip  %s: %s" % (path, error))
+            continue
+        run = body["run"]
+        label = "%s %s %s d%d j%d%s" % (run["name"], run["backend"] + ("-ms" if run["multishot"] else ""), run["mode"],
+                                       run["depth"], run["numjobs"], " sync" if run["sync"] else "")
+        if args.dry_run:
+            print("would send  %s (%d bytes%s)" % (label, len(json.dumps(body)), ", with a profile" if "profile" in body else ""))
+            sent += 1
+            continue
+        try:
+            answer = server.submit(body)
+        except Refused as refused:
+            if refused.status == 409:
+                stored += 1
+                print("known %s: %s" % (label, refused))
+                continue
+            failed += 1
+            print("FAIL  %s: %s (%s)" % (label, refused, refused.status))
+            for problem in refused.problems:
+                print("        - %s" % problem)
+            continue
+        except OSError as error:
+            print("bench/submit.py: cannot reach %s: %s" % (args.url, error), file=sys.stderr)
+            return 1
+        sent += 1
+        identity = answer.get("client", identity)
+        print("sent  %s  %s/r/%s" % (label, args.url.rstrip("/"), answer["id"]))
+
+    print("== %s: %d sent, %d stored already, %d refused" % ("dry run" if args.dry_run else "submit", sent, stored, failed))
+    if identity:
+        print("== you are %s; your results: %s/?client=%s" % (identity["name"], args.url.rstrip("/"), identity["id"]))
+    elif args.dry_run:
+        print("== your client id: %s" % machine["client_id"])
+    return 1 if failed else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
