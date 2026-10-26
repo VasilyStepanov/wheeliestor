@@ -27,6 +27,8 @@ The load:
   --complete-max N  most completions fio takes in one call (default: fio's 1)
   --complete-min N  completions fio waits for in one call (default: fio's 1)
   --submit-batch N  requests fio submits in one batch (default: fio's 1)
+  --fio-arg ARG     one more argument for fio, e.g. --fio-arg --norandommap; it
+                    can be given more than once
   --server-cpus LIST CPUs allowed to the server, e.g. 8-11 (default: all)
   --client-cpus LIST CPUs for fio jobs, one per job, e.g. 12-19 (default: all)
 
@@ -55,6 +57,7 @@ bs=4k mode=randread depth=16 numjobs=1 queues=1 sync=0 runtime=10 ramp=3 size=1g
 backend=uring multishot=0 direct=1 data=disk threads=""
 complete_max="" complete_min="" submit_batch="" server_cpus="" client_cpus=""
 name="" out=results build=1 keep=0
+extra_fio=()
 
 while [ $# -gt 0 ]; do
     case $1 in
@@ -70,6 +73,7 @@ while [ $# -gt 0 ]; do
     --complete-max) complete_max=$2; shift 2 ;;
     --complete-min) complete_min=$2; shift 2 ;;
     --submit-batch) submit_batch=$2; shift 2 ;;
+    --fio-arg) extra_fio+=("$2"); shift 2 ;;
     --server-cpus) server_cpus=$2; shift 2 ;;
     --client-cpus) client_cpus=$2; shift 2 ;;
     --backend) backend=$2; shift 2 ;;
@@ -257,6 +261,7 @@ compose run --rm -T --user "$(id -u):$(id -g)" client \
     --runtime="$runtime" --ramp_time="$ramp" --time_based \
     --thread --group_reporting \
     ${fio_options[@]+"${fio_options[@]}"} \
+    ${extra_fio[@]+"${extra_fio[@]}"} \
     --output-format=normal,json --output="$raw"
 
 # fio wrote its normal output and its JSON into one file: they are told apart
