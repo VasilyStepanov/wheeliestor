@@ -2,8 +2,11 @@
 #
 # Starts wheelie-server on a file in /data, made and filled the first time:
 # a file that is not written to has no blocks, and reading it would not read a
-# disk. What the server is started with comes from the environment:
+# disk. A block device is used as it is, and is not filled. What the server is
+# started with comes from the environment:
 #
+#   WHEELIE_FILE           the file or block device to serve (default:
+#                          /data/disk.img)
 #   WHEELIE_BACKEND        libc, alibc or uring (default: uring)
 #   WHEELIE_MULTISHOT      1 for multishot receive (default: 0)
 #   WHEELIE_THREADS        threads, each with a reactor (default: the CPUs)
@@ -13,10 +16,10 @@
 
 set -eu
 
-file=/data/disk.img
+file=${WHEELIE_FILE:-/data/disk.img}
 size_mb=${WHEELIE_FILE_SIZE_MB:-2048}
 
-if [ "$(stat -c %s "$file" 2> /dev/null || echo 0)" -ne $((size_mb * 1024 * 1024)) ]; then
+if [ ! -b "$file" ] && [ "$(stat -c %s "$file" 2> /dev/null || echo 0)" -ne $((size_mb * 1024 * 1024)) ]; then
     echo "wheelie-server: filling $file with $size_mb MiB" >&2
     dd if=/dev/zero of="$file" bs=1M count="$size_mb" conv=fsync status=none
 fi
