@@ -34,8 +34,10 @@ The variant, which the server and the client both get:
   --backend NAME    libc, alibc or uring (default: uring)
   --multishot       receive with one multishot receive instead of one per chunk
   --direct 0|1      the server opens its file with O_DIRECT (default: 1)
-  --data disk|tmpfs where the server's file is: on the volume of a disk, or in
-                    memory, with no disk under the load (default: disk)
+  --data disk|tmpfs|device
+                    where the server's file is: on the volume of a disk, in
+                    memory (tmpfs), or on the block device WHEELIE_DEVICE, with
+                    no filesystem in the way (default: disk)
   --threads N       server threads, each with a reactor (default: its CPUs)
 
 The run:
@@ -96,7 +98,13 @@ case $direct in
 esac
 case $data in
 disk | tmpfs) ;;
-*) echo "bench/run.sh: --data must be disk or tmpfs" >&2; exit 2 ;;
+device)
+    if [ -z "${WHEELIE_DEVICE:-}" ] || [ ! -b "$WHEELIE_DEVICE" ]; then
+        echo "bench/run.sh: --data device needs WHEELIE_DEVICE, a block device" >&2
+        exit 2
+    fi
+    ;;
+*) echo "bench/run.sh: --data must be disk, tmpfs or device" >&2; exit 2 ;;
 esac
 
 fio_options=()
@@ -187,6 +195,7 @@ WHEELIE_BACKEND=$backend
 WHEELIE_MULTISHOT=$multishot
 WHEELIE_DIRECT=$direct
 WHEELIE_DATA=$data
+WHEELIE_DEVICE=${WHEELIE_DEVICE:-}
 WHEELIE_THREADS=$threads
 WHEELIE_QUEUE_DEPTH=$queue_depth
 WHEELIE_FILE_SIZE_MB=$file_mb
@@ -198,6 +207,8 @@ ENV
 compose_files=(-f docker-compose.yml)
 if [ "$data" = tmpfs ]; then
     compose_files+=(-f docker-compose.tmpfs.yml)
+elif [ "$data" = device ]; then
+    compose_files+=(-f docker-compose.device.yml)
 fi
 
 compose() { $DOCKER compose --env-file "$env_file" "${compose_files[@]}" "$@"; }
@@ -237,11 +248,15 @@ esac
 echo "${started#wheelie-server: }" > "$out_abs/$name.server"
 
 # The same for where the file is: a volume that was made before may be on a disk.
-data_type=$(compose exec -T server stat -f -c %T /data | tr -d '\r')
-echo "== server: the file is on $data_type"
-if [ "$data" = tmpfs ] && [ "$data_type" != tmpfs ]; then
-    echo "bench/run.sh: the server's file is not in memory ($data_type)" >&2
-    exit 1
+if [ "$data" = device ]; then
+    echo "== server: the file is the block device $WHEELIE_DEVICE"
+else
+    data_type=$(compose exec -T server stat -f -c %T /data | tr -d '\r')
+    echo "== server: the file is on $data_type"
+    if [ "$data" = tmpfs ] && [ "$data_type" != tmpfs ]; then
+        echo "bench/run.sh: the server's file is not in memory ($data_type)" >&2
+        exit 1
+    fi
 fi
 
 echo "== fio: $mode bs=$bs depth=$depth numjobs=$numjobs queues=$queues sync=$sync, ${ramp}s ramp and ${runtime}s measured"
