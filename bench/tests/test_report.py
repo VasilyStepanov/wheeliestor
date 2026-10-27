@@ -234,6 +234,37 @@ class MatrixTest(unittest.TestCase):
         self.assertIn("--mode write --bs 1m --depth 4 --numjobs 4 --backend libc",
                       sequential)
 
+    def runs_of(self, *arguments):
+        result = self.dry_run(*arguments)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        names = []
+        for line in result.stdout.splitlines():
+            if "bench/run.sh" in line:
+                names.append(line.split("--name ")[1].split(" ")[0])
+        return names
+
+    def test_the_first_point_of_the_default_chart_comes_after_two_runs(self):
+        names = self.runs_of()
+        self.assertEqual(names[:2], ["randread_qd16_nj1_alibc", "randread_qd16_nj1_uring"])
+        # The loads that tell the most come first, the long blocks last.
+        loads = []
+        for name in names:
+            load = name.rsplit("_", 1)[0] if not name.endswith("uring-ms") else name[: -len("_uring-ms")]
+            if load not in loads:
+                loads.append(load)
+        self.assertEqual(loads[0], "randread_qd16_nj1")
+        self.assertEqual(loads[-2:], ["seqread_1m_nj4", "seqwrite_1m_nj4"])
+
+    def test_the_variant_that_starts_a_load_changes(self):
+        names = self.runs_of()
+        starts = [names[i].rsplit("_", 1)[1] if not names[i].endswith("uring-ms") else "uring-ms"
+                  for i in range(0, len(names), 4)]
+        self.assertEqual(starts[:4], ["alibc", "uring", "libc", "uring-ms"])
+        # The variants of one load are run next to each other.
+        for i in range(0, len(names), 4):
+            self.assertEqual(len({n.rsplit("_", 1)[0] if not n.endswith("uring-ms") else n[: -len("_uring-ms")]
+                                  for n in names[i:i + 4]}), 1)
+
     def test_what_is_not_its_own_goes_to_run_sh(self):
         result = self.dry_run("--variants", "libc", "--runtime", "5", "--direct", "0")
         runs = [line for line in result.stdout.splitlines() if "bench/run.sh" in line]
