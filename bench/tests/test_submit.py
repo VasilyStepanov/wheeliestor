@@ -101,6 +101,19 @@ class BuildTest(unittest.TestCase):
             too_long = write_result(d, "c", plain="x" * (submit.MAX_TEXT + 1))
             self.assertNotIn("fio_text", submit.build_submission(too_long, MACHINE))
 
+    def test_a_long_run_keeps_some_of_its_progress_lines(self):
+        eta = ["Jobs: 8 (f=8): [w(8)][%d.0%%][w=119MiB/s][w=30.5k IOPS][eta 00m:%02ds]" % (i % 100, i % 60) for i in range(1000)]
+        text = "case: (g=0): rw=randwrite\n" + "\n".join(eta) + "\n  write: IOPS=30.0k, BW=119MiB/s\n"
+        short = submit.shorten_eta(text, keep=50)
+        lines = short.splitlines()
+        self.assertEqual(len([l for l in lines if l.startswith("Jobs:")]), 50)
+        # The first and the last lines of progress and everything else stay.
+        self.assertEqual(lines[1], eta[0])
+        self.assertIn(eta[-1], lines)
+        self.assertIn("write: IOPS=30.0k", short)
+        self.assertEqual(submit.shorten_eta(text, keep=5000), text)
+        self.assertIsNone(submit.shorten_eta(None))
+
     def test_what_is_not_a_result_of_the_stand_is_refused(self):
         with tempfile.TemporaryDirectory() as d:
             path = os.path.join(d, "plain.json")

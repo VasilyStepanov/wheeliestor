@@ -316,6 +316,20 @@ def read_settings(path):
     return found
 
 
+def shorten_eta(text, keep=300):
+    """The plain output of fio has a line of progress (ETA) for every second of the run;
+    of a long run only `keep` of them, evenly, are kept, so that the text fits."""
+    if not text:
+        return text
+    lines = text.splitlines()
+    eta = [i for i, line in enumerate(lines) if line.startswith("Jobs:")]
+    if len(eta) <= keep:
+        return text
+    kept = {eta[i * (len(eta) - 1) // (keep - 1)] for i in range(keep)}
+    drop = set(eta) - kept
+    return "\n".join(line for i, line in enumerate(lines) if i not in drop)
+
+
 def iso(seconds):
     return datetime.datetime.fromtimestamp(seconds, datetime.timezone.utc).isoformat()
 
@@ -335,7 +349,7 @@ def build_submission(json_path, machine):
         raise ValueError("not a result of the wheelie engine")
     settings = read_settings(base + ".settings")
     banner = read_text(base + ".server")
-    plain = read_text(base + ".txt")
+    plain = shorten_eta(read_text(base + ".txt"))
 
     threads = None
     found = re.search(r"(\d+) threads", banner or "")

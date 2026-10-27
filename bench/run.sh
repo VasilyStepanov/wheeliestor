@@ -304,7 +304,9 @@ else
 fi
 
 echo "== fio: $mode bs=$bs depth=$depth numjobs=$numjobs queues=$queues sync=$sync, ${ramp}s ramp and ${runtime}s measured"
-raw="/results/$name.out"
+# fio prints its progress, a line a second (the ETA), and then its normal output
+# and its JSON, all to its standard output: that is what is kept, and told apart
+# below. Without a terminal fio shows no progress unless it is made to.
 run_fio() {
     compose run --rm -T --user "$(id -u):$(id -g)" client \
         fio --name="$name" \
@@ -318,7 +320,8 @@ run_fio() {
         --thread --group_reporting \
         ${fio_options[@]+"${fio_options[@]}"} \
         ${extra_fio[@]+"${extra_fio[@]}"} \
-        --output-format=normal,json --output="$raw"
+        --eta=always --eta-newline=1 \
+        --output-format=normal,json > "$out_abs/$name.out"
 }
 
 # A command that may need root: perf of the processes of the containers does.
@@ -357,13 +360,18 @@ else
     run_fio
 fi
 
-# fio wrote its normal output and its JSON into one file: they are told apart
-# by the braces of the JSON.
-awk -v txt="$out_abs/$name.txt" -v json="$out_abs/$name.json" '
+# fio wrote its progress, its normal output and its JSON into one file: the
+# JSON is told apart by its braces, and the rest is the text of the result. The
+# progress comes with carriage returns, which are made line ends, and the lines
+# of progress that repeat are kept once.
+tr '\r' '\n' < "$out_abs/$name.out" | awk -v txt="$out_abs/$name.txt" -v json="$out_abs/$name.json" '
+    { sub(/[ \t]+$/, "") }
     /^{$/ { in_json = 1 }
-    { print > (in_json ? json : txt) }
+    in_json { print > json }
+    !in_json && !(/^Jobs:/ && $0 == previous) && !(/^$/ && previous ~ /^Jobs:/) { print > txt }
+    !in_json { previous = $0 }
     /^}$/ { in_json = 0 }
-' "$out_abs/$name.out"
+'
 rm -f "$out_abs/$name.out"
 
 cat "$out_abs/$name.txt"
