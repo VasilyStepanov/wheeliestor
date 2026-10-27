@@ -153,11 +153,18 @@ bench/matrix.sh --runtime 10 --ramp 3
 ## Таблица и график
 
 `bench/report.py` делает таблицу и график из каталога результатов (или из
-отдельных JSON); `matrix.sh` вызывает его сам в конце:
+отдельных JSON); `matrix.sh` вызывает его сам в конце, для таблицы и для графика
+`alibc-vs-uring.svg` (по горизонтали `alibc`, по вертикали `uring`: потоки `alibc`
+это то, что заменяет кольцо):
 
 ```
-bench/report.py results/matrix-… --ratio --plot results/matrix-…/libc-vs-others.svg
+bench/report.py results/matrix-… --ratio
+bench/report.py results/matrix-… --baseline alibc --against uring --plot results/matrix-…/alibc-vs-uring.svg
+bench/report.py results/matrix-… --plot results/matrix-…/libc-vs-others.svg   # libc против остальных
 ```
+
+`--baseline` выбирает вариант по горизонтали (по умолчанию `libc`), `--against`
+список вариантов по вертикали через запятую (по умолчанию все, кроме базового).
 
 Нужен только `python3`, без сторонних пакетов. Вариант результата и нагрузка
 берутся из параметров, которые fio записал в JSON, а не из имени файла, поэтому

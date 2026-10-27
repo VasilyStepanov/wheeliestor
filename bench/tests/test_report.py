@@ -207,6 +207,26 @@ class ReportTest(unittest.TestCase):
         panels = [t.text for t in root.iter(SVG + "text") if t.get("class") == "panel-title"]
         self.assertEqual(panels, ["Small blocks"])
 
+    def test_a_chart_of_one_variant_against_another(self):
+        results = Results(self)
+        for backend, multishot, iops in (("alibc", False, 1000), ("uring", False, 4000), ("uring", True, 4200)):
+            results.add("%s%s" % (backend, "-ms" if multishot else ""), rw="randread", bs="4k", depth=16,
+                        numjobs=1, backend=backend, multishot=multishot, iops=iops, bw_kib=iops * 4)
+        read = report.read_results([results.path])
+        root = ET.fromstring(report.chart(read, "alibc", report.variants_of(read), ["uring"]))
+        text = [t.text for t in root.iter(SVG + "text")]
+        self.assertIn("alibc against uring", text)
+        # The baseline is not a series, and what is not asked for is not drawn.
+        titles = [t.text for t in root.iter(SVG + "title")]
+        self.assertEqual(len([t for t in titles if t.startswith("uring, ")]), 1)
+        self.assertFalse([t for t in titles if t.startswith("alibc, ")])
+        self.assertFalse([t for t in titles if t.startswith("uring-ms, ")])
+        # Without --against all the others are drawn, but not the baseline.
+        root = ET.fromstring(report.chart(read, "alibc", report.variants_of(read)))
+        titles = [t.text for t in root.iter(SVG + "title")]
+        self.assertTrue([t for t in titles if t.startswith("uring-ms, ")])
+        self.assertFalse([t for t in titles if t.startswith("alibc, ")])
+
     def test_without_the_baseline_there_is_no_chart(self):
         results = Results(self)
         results.add("only", rw="read", bs="4k", depth=1, numjobs=1, backend="uring",
