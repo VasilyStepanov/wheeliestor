@@ -308,6 +308,42 @@ class MainTest(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(len([r for r in fake.requests if r[0] == "/api/results"]), 2)
 
+    def test_the_name_is_told_before_anything_is_sent(self):
+        import io
+        from contextlib import redirect_stdout
+
+        answer = {"id": "r1", "client": {"id": "a" * 32, "name": "swift-otter-3f2a"}}
+        fake = FakeServer([(201, answer, {}), (201, answer, {})])
+        self.addCleanup(fake.close)
+        original = submit.Server.who
+        submit.Server.who = lambda self, client: {"name": "swift-otter-3f2a"}
+        self.addCleanup(setattr, submit.Server, "who", original)
+
+        def said(arguments):
+            out = io.StringIO()
+            with tempfile.TemporaryDirectory() as d, redirect_stdout(out):
+                write_result(d)
+                self.assertEqual(submit.main([a.replace("DIR", d) for a in arguments]), 0)
+            return [l for l in out.getvalue().splitlines() if "swift-otter-3f2a" in l]
+
+        lines = said(["--whoami", "--url", fake.url])
+        self.assertEqual(len(lines), 1)
+        self.assertIn("/?client=", lines[0])
+        # A submit says it at the start and again with the link at the end; with
+        # --no-whoami, which bench/run.sh uses after it has said it, only the end.
+        self.assertEqual(len(said(["--url", fake.url, "--code", "c", "DIR"])), 2)
+        self.assertEqual(len(said(["--no-whoami", "--url", fake.url, "--code", "c", "DIR"])), 1)
+
+    def test_without_an_answer_the_client_id_is_told(self):
+        import io
+        from contextlib import redirect_stdout
+
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = submit.say_who("http://127.0.0.1:9", "b" * 32)
+        self.assertEqual(code, 1)
+        self.assertIn("b" * 32, out.getvalue())
+
     def test_a_refused_result_fails_the_run_of_the_script(self):
         fake = FakeServer([(422, {"detail": "no", "problems": ["x"]}, {})])
         self.addCleanup(fake.close)

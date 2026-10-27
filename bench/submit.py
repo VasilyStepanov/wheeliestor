@@ -23,6 +23,14 @@ name of the host does not leave the machine, only a hash of it. The server
 answers with a name that is made of the id, and the script prints it with a
 link, so that the results can be found in the server.
 
+To know the name before anything is sent, ask for it:
+
+    bench/submit.py --whoami --url http://results.example:8080
+
+The name and the link of the results are printed at the start of every submit
+too, and bench/run.sh --submit and bench/matrix.sh --submit print them before
+the first run, so that you can look for yourself on the page while it goes.
+
 The server takes a result with a token. The script gets it for a code and keeps
 nothing: the token lives for a couple of hours. The code is in this file, in
 PUBLIC_CODE, and it is no secret: it tells the server which version of the
@@ -405,6 +413,10 @@ class Server:
             refused.retry_after = error.headers.get("Retry-After")
             raise refused from None
 
+    def who(self, client):
+        """The name that the server gives a client id, whether or not it has results."""
+        return self.call("GET", "/api/clients/" + client)
+
     def login(self):
         if not self.code:
             raise Refused(401, "no token and no code")
@@ -436,17 +448,37 @@ class Server:
 
 # ---------------------------------------------------------------------- main
 
+def say_who(url, client):
+    """Tells the name of a client and where its results are. Returns 0, or 1 if the server cannot be asked."""
+    if not url:
+        print("bench/submit.py: give --url or set WHEELIE_RESULTS_URL", file=sys.stderr)
+        return 2
+    try:
+        who = Server(url).who(client)
+    except (Refused, OSError) as error:
+        print("== your client id is %s (the server does not answer: %s)" % (client, error))
+        return 1
+    print("== you are %s; your results: %s/?client=%s" % (who["name"], url.rstrip("/"), client))
+    return 0
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Sends the results of bench/run.sh to a server of results.",
                                      epilog="See the head of this file for what is sent.")
-    parser.add_argument("paths", nargs="+", help="directories of results or .json files of fio")
+    parser.add_argument("paths", nargs="*", help="directories of results or .json files of fio")
     parser.add_argument("--url", default=os.environ.get("WHEELIE_RESULTS_URL"), help="the address of the server")
     parser.add_argument("--code", default=os.environ.get("WHEELIE_RESULTS_CODE") or PUBLIC_CODE,
                         help="the code for a token (default: the public code of this script)")
     parser.add_argument("--token", default=os.environ.get("WHEELIE_RESULTS_TOKEN"), help="a token, instead of the code")
     parser.add_argument("--dry-run", action="store_true", help="say what would be sent and send nothing")
+    parser.add_argument("--whoami", action="store_true", help="say the name of this client and the link of its results, and stop")
+    parser.add_argument("--no-whoami", action="store_true", help="do not say the name at the start (the caller has said it)")
     args = parser.parse_args(argv)
 
+    if args.whoami:
+        return say_who(args.url, collect_machine()["client_id"])
+    if not args.paths:
+        parser.error("give the results to send, or --whoami")
     files = find_results(args.paths)
     if not files:
         print("bench/submit.py: no results in %s" % " ".join(args.paths), file=sys.stderr)
@@ -457,6 +489,8 @@ def main(argv=None):
 
     machine = collect_machine()
     server = None if args.dry_run else Server(args.url, code=args.code, token=args.token)
+    if not args.dry_run and not args.no_whoami:
+        say_who(args.url, machine["client_id"])
     sent = stored = failed = 0
     identity = None
     for path in files:
