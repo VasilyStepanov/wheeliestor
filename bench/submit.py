@@ -5,11 +5,15 @@
 
 What is sent for a result, from the files that bench/run.sh keeps next to it:
 
-  * the JSON of fio, whole;
+  * the JSON of fio, whole, and its plain output (`<name>.txt`), which is what a
+    person reads;
   * the parameters of the run (the options fio recorded, the settings of the
     stand, the line the server printed on start);
   * the parameters of the machine: the kernel, the processor, the memory, the
-    disks, the network cards, the virtualization, docker;
+    disks, the network cards, the virtualization, docker, and the profile of the
+    frequency of the processor (the governor of cpufreq, the driver, the
+    preference of energy, the boost, the range): is it set to save energy or to
+    perform;
   * the profile, if there is a `<name>.profile.json` (bench/run.sh --profile),
     that is where the time goes.
 
@@ -53,6 +57,9 @@ import urllib.request
 import uuid
 
 SCHEMA = 1
+
+# The server takes the plain output of fio up to this many characters.
+MAX_TEXT = 100_000
 
 # The code that the server of results is asked for a token with. It is public
 # and gives nothing but the right to submit; the server can stop accepting it,
@@ -196,6 +203,41 @@ def nics():
     return found[:64]
 
 
+def cpu_power():
+    """The profile of the frequency of the processor, from cpufreq. A virtual machine has none."""
+    base = "/sys/devices/system/cpu"
+    cores = sorted(glob.glob(base + "/cpu[0-9]*"))
+
+    def all_of(name):
+        return {read_text("%s/cpufreq/%s" % (core, name)) for core in cores} - {None}
+
+    found = {}
+    governors = all_of("scaling_governor")
+    if governors:
+        found["governor"] = governors.pop() if len(governors) == 1 else "mixed"
+    first = cores[0] if cores else None
+    if first:
+        driver = read_text(first + "/cpufreq/scaling_driver")
+        if driver:
+            found["cpu_driver"] = driver
+        preferences = all_of("energy_performance_preference")
+        if preferences:
+            found["energy_preference"] = preferences.pop() if len(preferences) == 1 else "mixed"
+        for key, name in (("freq_min_mhz", "cpuinfo_min_freq"), ("freq_max_mhz", "cpuinfo_max_freq")):
+            khz = read_text("%s/cpufreq/%s" % (first, name))
+            if khz and khz.isdigit() and int(khz) > 0:
+                found[key] = int(khz) // 1000
+    # The boost: a switch of the driver, or the opposite of the switch of intel_pstate.
+    boost = read_text(base + "/cpufreq/boost")
+    if boost in ("0", "1"):
+        found["boost"] = boost == "1"
+    else:
+        no_turbo = read_text(base + "/intel_pstate/no_turbo")
+        if no_turbo in ("0", "1"):
+            found["boost"] = no_turbo == "0"
+    return found
+
+
 def docker_version():
     command = shlex.split(os.environ.get("DOCKER", "docker")) + ["version", "--format", "{{.Server.Version}}"]
     return (run_text(command) or "")[:64] or None
@@ -211,11 +253,11 @@ def collect_machine(directory=None):
         "memory_mb": memory_mb(),
         "virt": (run_text(["systemd-detect-virt"]) or None),
         "docker": docker_version(),
-        "governor": read_text("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor"),
         "disks": disks(),
         "nics": nics(),
     }
     machine.update(cpu_info())
+    machine.update(cpu_power())
     return {key: value for key, value in machine.items() if value not in (None, "")}
 
 
@@ -256,6 +298,7 @@ def build_submission(json_path, machine):
         raise ValueError("not a result of the wheelie engine")
     settings = read_settings(base + ".settings")
     banner = read_text(base + ".server")
+    plain = read_text(base + ".txt")
 
     threads = None
     found = re.search(r"(\d+) threads", banner or "")
@@ -302,6 +345,8 @@ def build_submission(json_path, machine):
     }
     if banner:
         body["server"] = banner[:500]
+    if plain and len(plain) <= MAX_TEXT:
+        body["fio_text"] = plain
     profile = base + ".profile.json"
     if os.path.exists(profile):
         body["profile"] = read_json(profile)
