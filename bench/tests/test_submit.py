@@ -40,7 +40,7 @@ def fio_json(rw="randwrite", bs="4k", depth=16, numjobs=8, backend="uring", mult
 MACHINE = {"client_id": "a" * 32, "kernel": "7.0", "cpu_model": "cpu", "cpus": 8, "memory_mb": 1024}
 
 
-def write_result(directory, name="case", settings=True, banner=True, profile=None, **kw):
+def write_result(directory, name="case", settings=True, banner=True, profile=None, plain=None, **kw):
     path = os.path.join(directory, name + ".json")
     with open(path, "w") as handle:
         handle.write("fio: a warning in front of the JSON\n")
@@ -52,6 +52,9 @@ def write_result(directory, name="case", settings=True, banner=True, profile=Non
     if banner:
         with open(os.path.join(directory, name + ".server"), "w") as handle:
             handle.write("listening on 0.0.0.0:39900 (uring multishot, 4 threads, queue depth 1024, O_DIRECT)\n")
+    if plain is not None:
+        with open(os.path.join(directory, name + ".txt"), "w") as handle:
+            handle.write(plain)
     if profile:
         with open(os.path.join(directory, name + ".profile.json"), "w") as handle:
             json.dump(profile, handle)
@@ -90,6 +93,14 @@ class BuildTest(unittest.TestCase):
             body = submit.build_submission(write_result(d, profile=profile), MACHINE)
         self.assertEqual(body["profile"], profile)
 
+    def test_the_plain_output_of_fio_goes_with_the_result(self):
+        with tempfile.TemporaryDirectory() as d:
+            body = submit.build_submission(write_result(d, plain="case: (g=0): rw=randwrite\n  write: IOPS=30.0k\n"), MACHINE)
+            self.assertIn("IOPS=30.0k", body["fio_text"])
+            self.assertNotIn("fio_text", submit.build_submission(write_result(d, "b"), MACHINE))
+            too_long = write_result(d, "c", plain="x" * (submit.MAX_TEXT + 1))
+            self.assertNotIn("fio_text", submit.build_submission(too_long, MACHINE))
+
     def test_what_is_not_a_result_of_the_stand_is_refused(self):
         with tempfile.TemporaryDirectory() as d:
             path = os.path.join(d, "plain.json")
@@ -126,6 +137,76 @@ class ClientIdTest(unittest.TestCase):
         self.assertRegex(machine["host_hash"], r"^[0-9a-f]{16}$")
         for key in ("client_id", "kernel", "cpu_model", "cpus", "memory_mb"):
             self.assertIn(key, machine)
+
+
+class MacTest(unittest.TestCase):
+    def test_the_kernel_of_a_mac_is_that_of_docker_desktop(self):
+        machine = {"os": "x", "kernel": "25.6.0", "cpus": 12, "memory_mb": 65536}
+        info = {"KernelVersion": "6.12.54-linuxkit", "OperatingSystem": "Docker Desktop", "NCPU": 8, "MemTotal": 8 * 1024**3}
+        with unittest.mock.patch.object(submit.platform, "release", return_value="25.6.0"), \
+                unittest.mock.patch.object(submit.platform, "mac_ver", return_value=("26.5", ("", "", ""), "arm64")):
+            submit.on_a_mac(machine, info)
+        self.assertEqual(machine["kernel"], "6.12.54-linuxkit")
+        self.assertEqual(machine["os"], "macOS 26.5 (Darwin 25.6.0)")
+        self.assertEqual((machine["cpus"], machine["memory_mb"]), (8, 8192))
+        self.assertEqual(machine["virt"], "docker desktop: Docker Desktop")
+
+    def test_without_an_answer_of_docker_the_darwin_kernel_stays(self):
+        machine = {"os": "x", "kernel": "25.6.0", "cpus": 12, "memory_mb": 65536}
+        with unittest.mock.patch.object(submit.platform, "release", return_value="25.6.0"), \
+                unittest.mock.patch.object(submit.platform, "mac_ver", return_value=("", ("", "", ""), "")):
+            submit.on_a_mac(machine, {})
+        self.assertEqual((machine["kernel"], machine["cpus"]), ("25.6.0", 12))
+        self.assertEqual(machine["os"], "macOS (Darwin 25.6.0)")
+
+
+class CpuPowerTest(unittest.TestCase):
+    def fake_sys(self, root, files):
+        for path, text in files.items():
+            full = os.path.join(root, path)
+            os.makedirs(os.path.dirname(full), exist_ok=True)
+            with open(full, "w") as handle:
+                handle.write(text + "\n")
+
+    def read_with(self, files):
+        with tempfile.TemporaryDirectory() as root:
+            self.fake_sys(root, files)
+            real_glob, real_read = submit.glob.glob, submit.read_text
+            base = "/sys/devices/system/cpu"
+            submit.glob.glob = lambda pattern: real_glob(pattern.replace(base, root + base))
+            submit.read_text = lambda path: real_read(root + path if path.startswith(base) else path)
+            try:
+                return submit.cpu_power()
+            finally:
+                submit.glob.glob, submit.read_text = real_glob, real_read
+
+    def test_a_machine_that_performs(self):
+        cpu = "sys/devices/system/cpu"
+        files = {}
+        for n in (0, 1):
+            files["/%s/cpu%d/cpufreq/scaling_governor" % (cpu, n)] = "performance"
+            files["/%s/cpu%d/cpufreq/scaling_driver" % (cpu, n)] = "amd-pstate"
+            files["/%s/cpu%d/cpufreq/cpuinfo_min_freq" % (cpu, n)] = "400000"
+            files["/%s/cpu%d/cpufreq/cpuinfo_max_freq" % (cpu, n)] = "3400000"
+        files["/%s/cpufreq/boost" % cpu] = "1"
+        found = self.read_with({k[1:]: v for k, v in files.items()})
+        self.assertEqual(found, {"governor": "performance", "cpu_driver": "amd-pstate", "freq_min_mhz": 400,
+                                 "freq_max_mhz": 3400, "boost": True})
+
+    def test_cores_that_differ_are_mixed_and_intel_boost_is_inverted(self):
+        cpu = "sys/devices/system/cpu"
+        found = self.read_with({
+            cpu + "/cpu0/cpufreq/scaling_governor": "powersave",
+            cpu + "/cpu1/cpufreq/scaling_governor": "performance",
+            cpu + "/cpu0/cpufreq/energy_performance_preference": "balance_power",
+            cpu + "/intel_pstate/no_turbo": "1",
+        })
+        self.assertEqual(found["governor"], "mixed")
+        self.assertEqual(found["energy_preference"], "balance_power")
+        self.assertIs(found["boost"], False)
+
+    def test_a_virtual_machine_has_nothing(self):
+        self.assertEqual(self.read_with({"sys/devices/system/cpu/cpu0/online": "1"}), {})
 
 
 class FakeServer:
@@ -247,6 +328,42 @@ class MainTest(unittest.TestCase):
             code = submit.main(["--url", fake.url, "--code", "c", d])
         self.assertEqual(code, 0)
         self.assertEqual(len([r for r in fake.requests if r[0] == "/api/results"]), 2)
+
+    def test_the_name_is_told_before_anything_is_sent(self):
+        import io
+        from contextlib import redirect_stdout
+
+        answer = {"id": "r1", "client": {"id": "a" * 32, "name": "swift-otter-3f2a"}}
+        fake = FakeServer([(201, answer, {}), (201, answer, {})])
+        self.addCleanup(fake.close)
+        original = submit.Server.who
+        submit.Server.who = lambda self, client: {"name": "swift-otter-3f2a"}
+        self.addCleanup(setattr, submit.Server, "who", original)
+
+        def said(arguments):
+            out = io.StringIO()
+            with tempfile.TemporaryDirectory() as d, redirect_stdout(out):
+                write_result(d)
+                self.assertEqual(submit.main([a.replace("DIR", d) for a in arguments]), 0)
+            return [l for l in out.getvalue().splitlines() if "swift-otter-3f2a" in l]
+
+        lines = said(["--whoami", "--url", fake.url])
+        self.assertEqual(len(lines), 1)
+        self.assertIn("/?client=", lines[0])
+        # A submit says it at the start and again with the link at the end; with
+        # --no-whoami, which bench/run.sh uses after it has said it, only the end.
+        self.assertEqual(len(said(["--url", fake.url, "--code", "c", "DIR"])), 2)
+        self.assertEqual(len(said(["--no-whoami", "--url", fake.url, "--code", "c", "DIR"])), 1)
+
+    def test_without_an_answer_the_client_id_is_told(self):
+        import io
+        from contextlib import redirect_stdout
+
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = submit.say_who("http://127.0.0.1:9", "b" * 32)
+        self.assertEqual(code, 1)
+        self.assertIn("b" * 32, out.getvalue())
 
     def test_a_refused_result_fails_the_run_of_the_script(self):
         fake = FakeServer([(422, {"detail": "no", "problems": ["x"]}, {})])

@@ -261,6 +261,12 @@ trap cleanup EXIT
 
 cp "$env_file" "$out_abs/$name.settings"
 
+# Who is sending, said before the run: the page of results can be opened and
+# searched for the name while the run goes.
+if [ -n "$submit_url" ]; then
+    python3 -I "$(dirname "$0")/submit.py" --whoami --url "$submit_url" || true
+fi
+
 if [ "$build" = 1 ]; then
     echo "== building the images"
     compose build
@@ -402,6 +408,6 @@ echo "results: $out/$name.txt, $out/$name.json, $out/$name.server"
 
 if [ -n "$submit_url" ]; then
     # A result that is not sent is not a failed run: it stays in the directory.
-    python3 -I "$here/submit.py" --url "$submit_url" "$out_abs/$name.json" \
+    python3 -I "$here/submit.py" --no-whoami --url "$submit_url" "$out_abs/$name.json" \
         || echo "bench/run.sh: the result was not submitted; bench/submit.py can send it later" >&2
 fi

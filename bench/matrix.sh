@@ -90,6 +90,17 @@ done
 
 DOCKER=${DOCKER:-docker}
 
+# The output of every run goes to a log, so who is sending is said here, once.
+if [ "$dry_run" = 0 ]; then
+    previous=""
+    for argument in ${passed[@]+"${passed[@]}"}; do
+        if [ "$previous" = --submit ]; then
+            python3 -I "$(dirname "$0")/submit.py" --whoami --url "$argument" || true
+        fi
+        previous=$argument
+    done
+fi
+
 if [ "$dry_run" = 0 ] && [ "$build" = 1 ]; then
     echo "== building the images"
     $DOCKER compose build

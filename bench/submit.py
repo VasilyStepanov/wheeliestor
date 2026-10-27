@@ -5,11 +5,15 @@
 
 What is sent for a result, from the files that bench/run.sh keeps next to it:
 
-  * the JSON of fio, whole;
+  * the JSON of fio, whole, and its plain output (`<name>.txt`), which is what a
+    person reads;
   * the parameters of the run (the options fio recorded, the settings of the
     stand, the line the server printed on start);
   * the parameters of the machine: the kernel, the processor, the memory, the
-    disks, the network cards, the virtualization, docker;
+    disks, the network cards, the virtualization, docker, and the profile of the
+    frequency of the processor (the governor of cpufreq, the driver, the
+    preference of energy, the boost, the range): is it set to save energy or to
+    perform;
   * the profile, if there is a `<name>.profile.json` (bench/run.sh --profile),
     that is where the time goes.
 
@@ -18,6 +22,14 @@ makes the first time and keeps in ~/.local/state/wheeliestor/client-id. The
 name of the host does not leave the machine, only a hash of it. The server
 answers with a name that is made of the id, and the script prints it with a
 link, so that the results can be found in the server.
+
+To know the name before anything is sent, ask for it:
+
+    bench/submit.py --whoami --url http://results.example:8080
+
+The name and the link of the results are printed at the start of every submit
+too, and bench/run.sh --submit and bench/matrix.sh --submit print them before
+the first run, so that you can look for yourself on the page while it goes.
 
 The server takes a result with a token. The script gets it for a code and keeps
 nothing: the token lives for a couple of hours. The code is in this file, in
@@ -53,6 +65,9 @@ import urllib.request
 import uuid
 
 SCHEMA = 1
+
+# The server takes the plain output of fio up to this many characters.
+MAX_TEXT = 100_000
 
 # The code that the server of results is asked for a token with. It is public
 # and gives nothing but the right to submit; the server can stop accepting it,
@@ -196,9 +211,71 @@ def nics():
     return found[:64]
 
 
+def cpu_power():
+    """The profile of the frequency of the processor, from cpufreq. A virtual machine has none."""
+    base = "/sys/devices/system/cpu"
+    cores = sorted(glob.glob(base + "/cpu[0-9]*"))
+
+    def all_of(name):
+        return {read_text("%s/cpufreq/%s" % (core, name)) for core in cores} - {None}
+
+    found = {}
+    governors = all_of("scaling_governor")
+    if governors:
+        found["governor"] = governors.pop() if len(governors) == 1 else "mixed"
+    first = cores[0] if cores else None
+    if first:
+        driver = read_text(first + "/cpufreq/scaling_driver")
+        if driver:
+            found["cpu_driver"] = driver
+        preferences = all_of("energy_performance_preference")
+        if preferences:
+            found["energy_preference"] = preferences.pop() if len(preferences) == 1 else "mixed"
+        for key, name in (("freq_min_mhz", "cpuinfo_min_freq"), ("freq_max_mhz", "cpuinfo_max_freq")):
+            khz = read_text("%s/cpufreq/%s" % (first, name))
+            if khz and khz.isdigit() and int(khz) > 0:
+                found[key] = int(khz) // 1000
+    # The boost: a switch of the driver, or the opposite of the switch of intel_pstate.
+    boost = read_text(base + "/cpufreq/boost")
+    if boost in ("0", "1"):
+        found["boost"] = boost == "1"
+    else:
+        no_turbo = read_text(base + "/intel_pstate/no_turbo")
+        if no_turbo in ("0", "1"):
+            found["boost"] = no_turbo == "0"
+    return found
+
+
 def docker_version():
     command = shlex.split(os.environ.get("DOCKER", "docker")) + ["version", "--format", "{{.Server.Version}}"]
     return (run_text(command) or "")[:64] or None
+
+
+def docker_info():
+    """What docker says of the machine that the containers run on: its kernel, system, cpus and memory."""
+    command = shlex.split(os.environ.get("DOCKER", "docker")) + ["info", "--format", "{{json .}}"]
+    text = run_text(command)
+    try:
+        info = json.loads(text) if text else {}
+    except ValueError:
+        return {}
+    return info if isinstance(info, dict) else {}
+
+
+def on_a_mac(machine, info):
+    """On a Mac the stand runs in the Linux of Docker Desktop, so the kernel, the cpus and the memory that
+    matter are its, not those of the Mac. The release that Python tells there is that of Darwin."""
+    release = platform.release()
+    version = platform.mac_ver()[0]
+    machine["os"] = ("macOS %s (Darwin %s)" % (version, release) if version else "macOS (Darwin %s)" % release)[:128]
+    kernel = info.get("KernelVersion")
+    if kernel:
+        machine["kernel"] = str(kernel)[:128]
+    if isinstance(info.get("NCPU"), int):
+        machine["cpus"] = info["NCPU"]
+    if isinstance(info.get("MemTotal"), int):
+        machine["memory_mb"] = info["MemTotal"] // (1024 * 1024)
+    machine["virt"] = ("docker desktop: " + str(info.get("OperatingSystem", "vm")))[:64]
 
 
 def collect_machine(directory=None):
@@ -211,11 +288,13 @@ def collect_machine(directory=None):
         "memory_mb": memory_mb(),
         "virt": (run_text(["systemd-detect-virt"]) or None),
         "docker": docker_version(),
-        "governor": read_text("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor"),
         "disks": disks(),
         "nics": nics(),
     }
     machine.update(cpu_info())
+    machine.update(cpu_power())
+    if platform.system() == "Darwin":
+        on_a_mac(machine, docker_info())
     return {key: value for key, value in machine.items() if value not in (None, "")}
 
 
@@ -256,6 +335,7 @@ def build_submission(json_path, machine):
         raise ValueError("not a result of the wheelie engine")
     settings = read_settings(base + ".settings")
     banner = read_text(base + ".server")
+    plain = read_text(base + ".txt")
 
     threads = None
     found = re.search(r"(\d+) threads", banner or "")
@@ -302,6 +382,8 @@ def build_submission(json_path, machine):
     }
     if banner:
         body["server"] = banner[:500]
+    if plain and len(plain) <= MAX_TEXT:
+        body["fio_text"] = plain
     profile = base + ".profile.json"
     if os.path.exists(profile):
         body["profile"] = read_json(profile)
@@ -360,6 +442,10 @@ class Server:
             refused.retry_after = error.headers.get("Retry-After")
             raise refused from None
 
+    def who(self, client):
+        """The name that the server gives a client id, whether or not it has results."""
+        return self.call("GET", "/api/clients/" + client)
+
     def login(self):
         if not self.code:
             raise Refused(401, "no token and no code")
@@ -391,17 +477,37 @@ class Server:
 
 # ---------------------------------------------------------------------- main
 
+def say_who(url, client):
+    """Tells the name of a client and where its results are. Returns 0, or 1 if the server cannot be asked."""
+    if not url:
+        print("bench/submit.py: give --url or set WHEELIE_RESULTS_URL", file=sys.stderr)
+        return 2
+    try:
+        who = Server(url).who(client)
+    except (Refused, OSError) as error:
+        print("== your client id is %s (the server does not answer: %s)" % (client, error))
+        return 1
+    print("== you are %s; your results: %s/?client=%s" % (who["name"], url.rstrip("/"), client))
+    return 0
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Sends the results of bench/run.sh to a server of results.",
                                      epilog="See the head of this file for what is sent.")
-    parser.add_argument("paths", nargs="+", help="directories of results or .json files of fio")
+    parser.add_argument("paths", nargs="*", help="directories of results or .json files of fio")
     parser.add_argument("--url", default=os.environ.get("WHEELIE_RESULTS_URL"), help="the address of the server")
     parser.add_argument("--code", default=os.environ.get("WHEELIE_RESULTS_CODE") or PUBLIC_CODE,
                         help="the code for a token (default: the public code of this script)")
     parser.add_argument("--token", default=os.environ.get("WHEELIE_RESULTS_TOKEN"), help="a token, instead of the code")
     parser.add_argument("--dry-run", action="store_true", help="say what would be sent and send nothing")
+    parser.add_argument("--whoami", action="store_true", help="say the name of this client and the link of its results, and stop")
+    parser.add_argument("--no-whoami", action="store_true", help="do not say the name at the start (the caller has said it)")
     args = parser.parse_args(argv)
 
+    if args.whoami:
+        return say_who(args.url, collect_machine()["client_id"])
+    if not args.paths:
+        parser.error("give the results to send, or --whoami")
     files = find_results(args.paths)
     if not files:
         print("bench/submit.py: no results in %s" % " ".join(args.paths), file=sys.stderr)
@@ -412,6 +518,8 @@ def main(argv=None):
 
     machine = collect_machine()
     server = None if args.dry_run else Server(args.url, code=args.code, token=args.token)
+    if not args.dry_run and not args.no_whoami:
+        say_who(args.url, machine["client_id"])
     sent = stored = failed = 0
     identity = None
     for path in files:
