@@ -141,5 +141,8 @@ done
 
 if [ "$dry_run" = 0 ]; then
     echo "== report"
-    bench/report.py "$out" --ratio --plot "$out/libc-vs-others.svg" | tee "$out/table.md"
+    bench/report.py "$out" --ratio | tee "$out/table.md"
+    # The chart is alibc against io_uring: the threads of alibc are what io_uring
+    # replaces, so it is the pair that tells what the ring gives.
+    bench/report.py "$out" --baseline alibc --against uring --plot "$out/alibc-vs-uring.svg" > /dev/null
 fi

@@ -2,6 +2,7 @@
 """Turns the JSON that bench/run.sh keeps into a table and a chart.
 
     bench/report.py results/matrix --plot results/matrix/libc-vs-others.svg
+    bench/report.py results/matrix --baseline alibc --against uring --plot alibc-vs-uring.svg
 
 The variant of a result (libc, alibc, uring, uring-ms) and the load it was
 measured under are read from the options fio recorded in the JSON, not from the
@@ -345,8 +346,12 @@ def draw_panel(out, points, series, baseline, left, top, size, title, unit):
     out.extend(labels)
 
 
-def chart(results, baseline, variants):
-    series = [(v, shape) for v, shape in SERIES if v in variants]
+def chart(results, baseline, variants, against=None):
+    """The chart: the baseline on the horizontal axis, and on the vertical one the variants
+    of `against` (default: all that the chart knows of, but the baseline)."""
+    series = [(v, shape) for v, shape in SERIES if v in variants and v != baseline and (not against or v in against)]
+    if not series:
+        raise ValueError("no variant to put against %s" % baseline)
     panels = []
     for large, title, unit in ((False, "Small blocks", "IOPS"), (True, "Large blocks", "MiB/s")):
         points = panel_points(results, baseline, series, large)
@@ -359,13 +364,14 @@ def chart(results, baseline, variants):
     width = left + len(panels) * size + (len(panels) - 1) * gap + 40
     height = top + size + 70
     names = ", ".join(v for v, _ in series)
+    against_text = names if against else "the other variants"
     out = [
         '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 %d %d" width="%d" height="%d" role="img" aria-labelledby="t d">' % (width, height, width, height),
         "<style>%s</style>" % STYLE,
-        '<title id="t">%s against the other variants</title>' % escape(baseline),
+        '<title id="t">%s against %s</title>' % (escape(baseline), escape(against_text)),
         '<desc id="d">A point for each load: %s on the horizontal axis and %s on the vertical one, both logarithmic. Above the diagonal a variant is faster than %s.</desc>' % (escape(baseline), escape(names), escape(baseline)),
         '<rect class="surface" width="%d" height="%d"/>' % (width, height),
-        '<text class="title" x="24" y="32">%s against the other variants</text>' % escape(baseline),
+        '<text class="title" x="24" y="32">%s against %s</text>' % (escape(baseline), escape(against_text)),
         '<text class="subtitle" x="24" y="52">A point is one load. Above the diagonal a variant is faster than %s, below it slower.</text>' % escape(baseline),
     ]
 
@@ -389,6 +395,7 @@ def main():
         description="A table and a chart from the results of bench/run.sh.")
     parser.add_argument("paths", nargs="+", help="JSON files, or directories of them")
     parser.add_argument("--baseline", default=BASELINE, help="the variant the others are compared with (default: %s)" % BASELINE)
+    parser.add_argument("--against", metavar="LIST", help="the variants for the vertical axis of the chart, comma separated (default: all but the baseline)")
     parser.add_argument("--plot", metavar="FILE", help="write the chart, an SVG, to FILE")
     parser.add_argument("--ratio", action="store_true", help="also print the IOPS of each variant as a multiple of the baseline")
     args = parser.parse_args()
@@ -406,7 +413,7 @@ def main():
 
     if args.plot:
         try:
-            svg = chart(results, args.baseline, variants)
+            svg = chart(results, args.baseline, variants, args.against.split(",") if args.against else None)
         except ValueError as error:
             print("report.py: %s" % error, file=sys.stderr)
             return 1
