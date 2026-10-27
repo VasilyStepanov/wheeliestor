@@ -90,7 +90,14 @@ done
 
 DOCKER=${DOCKER:-docker}
 
-# The output of every run goes to a log, so who is sending is said here, once.
+if [ "$dry_run" = 0 ] && [ "$build" = 1 ]; then
+    echo "== building the images"
+    $DOCKER compose build
+fi
+
+# The output of every run goes to a log, so who is sending is said here, once,
+# after the output of the build and right before the first run: it is the last
+# thing on the screen before the runs, and the page can be searched for the name.
 if [ "$dry_run" = 0 ]; then
     previous=""
     for argument in ${passed[@]+"${passed[@]}"}; do
@@ -99,11 +106,6 @@ if [ "$dry_run" = 0 ]; then
         fi
         previous=$argument
     done
-fi
-
-if [ "$dry_run" = 0 ] && [ "$build" = 1 ]; then
-    echo "== building the images"
-    $DOCKER compose build
 fi
 
 [ "$dry_run" = 1 ] || mkdir -p "$out"
