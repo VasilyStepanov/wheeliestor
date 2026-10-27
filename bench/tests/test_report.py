@@ -265,6 +265,25 @@ class MatrixTest(unittest.TestCase):
             self.assertEqual(len({n.rsplit("_", 1)[0] if not n.endswith("uring-ms") else n[: -len("_uring-ms")]
                                   for n in names[i:i + 4]}), 1)
 
+    def test_the_name_of_the_client_is_told_after_the_build_and_before_the_first_run(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as d:
+            docker = os.path.join(d, "docker")
+            with open(docker, "w") as handle:
+                handle.write("#!/bin/bash\nexit 0\n")
+            os.chmod(docker, 0o755)
+            result = subprocess.run(
+                [os.path.join(BENCH, "matrix.sh"), "--out", os.path.join(d, "out"), "--submit", "http://127.0.0.1:9"],
+                capture_output=True, text=True, env=dict(os.environ, DOCKER=docker,
+                                                         XDG_STATE_HOME=os.path.join(d, "state")))
+        lines = result.stdout.splitlines()
+        building = next(i for i, l in enumerate(lines) if "building the images" in l)
+        who = next(i for i, l in enumerate(lines) if l.startswith("== your client id") or "== you are" in l)
+        first = next(i for i, l in enumerate(lines) if "[1/32]" in l)
+        self.assertLess(building, who)
+        self.assertEqual(who + 1, first)
+
     def test_what_is_not_its_own_goes_to_run_sh(self):
         result = self.dry_run("--variants", "libc", "--runtime", "5", "--direct", "0")
         runs = [line for line in result.stdout.splitlines() if "bench/run.sh" in line]
