@@ -20,6 +20,9 @@ Usage: bench/ceiling.sh [options]
   --size SIZE       size of the test file on the volume (default: 1g)
   --volume NAME     the docker volume of the stand (default: the one that
                     `docker volume ls` shows ending in _data)
+  --sync 0|1        1 makes the writes durable before they finish, as
+                    bench/run.sh --sync 1 does: fio with sync=dsync, which is
+                    what the server asks of the kernel (default: 1)
   --stand-file      measure the file of the server (disk.img) instead of a new
                     one: the speed of writes of a virtual disk can differ
                     between files and between hours, and this is the number to
@@ -45,7 +48,7 @@ USAGE
 }
 
 out=results/ceiling runtime=15 ramp=3 size=1g volume="" device="" image=wheeliestor-client
-stand_file=0
+stand_file=0 sync=1
 
 while [ $# -gt 0 ]; do
     case $1 in
@@ -54,6 +57,7 @@ while [ $# -gt 0 ]; do
     --ramp) ramp=$2; shift 2 ;;
     --size) size=$2; shift 2 ;;
     --volume) volume=$2; shift 2 ;;
+    --sync) sync=$2; shift 2 ;;
     --stand-file) stand_file=1; shift ;;
     --device) device=$2; shift 2 ;;
     --image) image=$2; shift 2 ;;
@@ -100,6 +104,11 @@ run() {
     else
         target_options=(--filename="$device" --readonly --size=20g)
     fi
+    # The writes of the stand are durable by default, so the ceiling of a write is
+    # that of a durable write; a read has nothing to make durable.
+    case $name in
+    *write*) [ "$sync" = 1 ] && set -- "$@" --sync=dsync ;;
+    esac
     local mount=(-v "$volume":/data)
     [ "$target" = device ] && mount=(--device "$device")
 

@@ -20,7 +20,7 @@ The load:
   --numjobs N       fio jobs, each with a connection of its own (default: 1)
   --queues N        connections of each fio job, over which its requests are
                     spread (default: 1)
-  --sync 0|1        1 makes a write durable before it is answered (default: 0)
+  --sync 0|1        1 makes a write durable before it is answered (default: 1)
   --runtime SEC     measured time (default: 10)
   --ramp SEC        time before the measure, thrown away (default: 3)
   --size SIZE       the range of the file that is read and written (default: 1g)
@@ -55,7 +55,7 @@ Environment:
 USAGE
 }
 
-bs=4k mode=randread depth=16 numjobs=1 queues=1 sync=0 runtime=10 ramp=3 size=1g
+bs=4k mode=randread depth=16 numjobs=1 queues=1 sync=1 runtime=10 ramp=3 size=1g
 backend=uring multishot=0 direct=1 data=disk threads=""
 complete_max="" complete_min="" submit_batch="" server_cpus="" client_cpus=""
 name="" out=results build=1 keep=0
