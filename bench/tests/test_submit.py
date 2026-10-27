@@ -139,6 +139,27 @@ class ClientIdTest(unittest.TestCase):
             self.assertIn(key, machine)
 
 
+class MacTest(unittest.TestCase):
+    def test_the_kernel_of_a_mac_is_that_of_docker_desktop(self):
+        machine = {"os": "x", "kernel": "25.6.0", "cpus": 12, "memory_mb": 65536}
+        info = {"KernelVersion": "6.12.54-linuxkit", "OperatingSystem": "Docker Desktop", "NCPU": 8, "MemTotal": 8 * 1024**3}
+        with unittest.mock.patch.object(submit.platform, "release", return_value="25.6.0"), \
+                unittest.mock.patch.object(submit.platform, "mac_ver", return_value=("26.5", ("", "", ""), "arm64")):
+            submit.on_a_mac(machine, info)
+        self.assertEqual(machine["kernel"], "6.12.54-linuxkit")
+        self.assertEqual(machine["os"], "macOS 26.5 (Darwin 25.6.0)")
+        self.assertEqual((machine["cpus"], machine["memory_mb"]), (8, 8192))
+        self.assertEqual(machine["virt"], "docker desktop: Docker Desktop")
+
+    def test_without_an_answer_of_docker_the_darwin_kernel_stays(self):
+        machine = {"os": "x", "kernel": "25.6.0", "cpus": 12, "memory_mb": 65536}
+        with unittest.mock.patch.object(submit.platform, "release", return_value="25.6.0"), \
+                unittest.mock.patch.object(submit.platform, "mac_ver", return_value=("", ("", "", ""), "")):
+            submit.on_a_mac(machine, {})
+        self.assertEqual((machine["kernel"], machine["cpus"]), ("25.6.0", 12))
+        self.assertEqual(machine["os"], "macOS (Darwin 25.6.0)")
+
+
 class CpuPowerTest(unittest.TestCase):
     def fake_sys(self, root, files):
         for path, text in files.items():

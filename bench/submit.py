@@ -251,6 +251,33 @@ def docker_version():
     return (run_text(command) or "")[:64] or None
 
 
+def docker_info():
+    """What docker says of the machine that the containers run on: its kernel, system, cpus and memory."""
+    command = shlex.split(os.environ.get("DOCKER", "docker")) + ["info", "--format", "{{json .}}"]
+    text = run_text(command)
+    try:
+        info = json.loads(text) if text else {}
+    except ValueError:
+        return {}
+    return info if isinstance(info, dict) else {}
+
+
+def on_a_mac(machine, info):
+    """On a Mac the stand runs in the Linux of Docker Desktop, so the kernel, the cpus and the memory that
+    matter are its, not those of the Mac. The release that Python tells there is that of Darwin."""
+    release = platform.release()
+    version = platform.mac_ver()[0]
+    machine["os"] = ("macOS %s (Darwin %s)" % (version, release) if version else "macOS (Darwin %s)" % release)[:128]
+    kernel = info.get("KernelVersion")
+    if kernel:
+        machine["kernel"] = str(kernel)[:128]
+    if isinstance(info.get("NCPU"), int):
+        machine["cpus"] = info["NCPU"]
+    if isinstance(info.get("MemTotal"), int):
+        machine["memory_mb"] = info["MemTotal"] // (1024 * 1024)
+    machine["virt"] = ("docker desktop: " + str(info.get("OperatingSystem", "vm")))[:64]
+
+
 def collect_machine(directory=None):
     machine = {
         "client_id": client_id(directory),
@@ -266,6 +293,8 @@ def collect_machine(directory=None):
     }
     machine.update(cpu_info())
     machine.update(cpu_power())
+    if platform.system() == "Darwin":
+        on_a_mac(machine, docker_info())
     return {key: value for key, value in machine.items() if value not in (None, "")}
 
 
