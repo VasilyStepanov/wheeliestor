@@ -13,7 +13,7 @@ usage() {
 Usage: bench/matrix.sh [options] [options of bench/run.sh]
 
   --out DIR         where the results go (default: results/matrix-DATE)
-  --variants LIST   the variants, a quoted list (default: "libc alibc uring uring-ms")
+  --variants LIST   the variants, a quoted list (default: "alibc uring libc uring-ms")
   --dry-run         only say what would be run
   --no-build        do not build the images
   -h, --help        show this help and exit
@@ -24,10 +24,19 @@ What is not an option of this script, such as --runtime, --ramp, --direct,
 
 The loads, each of which is run for every variant:
 
-  randread  4k, depth 1 and 16, one job; depth 16, 8 jobs
-  randwrite 4k, depth 1 and 16, one job; depth 16, 8 jobs
+  randread  4k, depth 16, one job and 8 jobs; depth 1, one job
+  randwrite 4k, depth 16, one job and 8 jobs; depth 1, one job
   read      1m, depth 4, 4 jobs
   write     1m, depth 4, 4 jobs
+
+The order is made for a chart of results that is filled as early as it can be
+(bench/run.sh --submit sends every result when it is measured): the loads that
+tell the most come first, and the first two variants of the first load are the
+two that the chart compares by default, so the first point is there after two
+runs. The variants of one load are run next to each other, and the variant
+that starts a load changes from load to load, so that the first run after a
+heavy load, which is a little slower, is not always the same variant. The order
+of --variants is the order of the first load.
 
 A run that has a result in the directory already is not run again, so a
 matrix that was interrupted goes on where it stopped when it is run again with
@@ -40,17 +49,17 @@ USAGE
 
 # name:mode:bs:depth:numjobs
 LOADS=(
-    randread_qd1_nj1:randread:4k:1:1
     randread_qd16_nj1:randread:4k:16:1
-    randread_qd16_nj8:randread:4k:16:8
-    randwrite_qd1_nj1:randwrite:4k:1:1
     randwrite_qd16_nj1:randwrite:4k:16:1
+    randread_qd16_nj8:randread:4k:16:8
     randwrite_qd16_nj8:randwrite:4k:16:8
+    randread_qd1_nj1:randread:4k:1:1
+    randwrite_qd1_nj1:randwrite:4k:1:1
     seqread_1m_nj4:read:1m:4:4
     seqwrite_1m_nj4:write:1m:4:4
 )
 
-out="" variants="libc alibc uring uring-ms" dry_run=0 build=1
+out="" variants="alibc uring libc uring-ms" dry_run=0 build=1
 passed=()
 
 while [ $# -gt 0 ]; do
@@ -89,9 +98,15 @@ fi
 [ "$dry_run" = 1 ] || mkdir -p "$out"
 total=$(($(echo $variants | wc -w) * ${#LOADS[@]}))
 number=0
+load_number=0
+variant_list=($variants)
 for load in "${LOADS[@]}"; do
     IFS=: read -r name mode bs depth numjobs <<< "$load"
-    for variant in $variants; do
+    # The variants of a load start from another one than those of the load before.
+    shift_by=$((load_number % ${#variant_list[@]}))
+    load_number=$((load_number + 1))
+    for ((i = 0; i < ${#variant_list[@]}; i++)); do
+        variant=${variant_list[$(((i + shift_by) % ${#variant_list[@]}))]}
         number=$((number + 1))
         run_name="${name}_${variant}"
         if [ -s "$out/$run_name.json" ]; then
