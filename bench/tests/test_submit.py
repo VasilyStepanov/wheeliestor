@@ -5,6 +5,7 @@ import sys
 import tempfile
 import threading
 import unittest
+import unittest.mock
 
 BENCH = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, BENCH)
@@ -207,6 +208,26 @@ class ServerTest(unittest.TestCase):
         fake, server = self.server([])
         with self.assertRaises(submit.Refused):
             server.submit({})
+
+    def test_a_code_that_the_server_does_not_know_means_an_old_version(self):
+        fake = FakeServer([])
+        self.addCleanup(fake.close)
+        server = submit.Server(fake.url, code="old", sleep=self.slept.append)
+        server.call = lambda *a, **k: (_ for _ in ()).throw(submit.Refused(403, "the code is not known"))
+        with self.assertRaises(submit.Refused) as raised:
+            server.submit({})
+        self.assertEqual(raised.exception.status, 403)
+        self.assertIn("update", str(raised.exception))
+
+    def test_the_public_code_is_the_default(self):
+        fake = FakeServer([(201, {"id": "r1", "client": {"id": "a" * 32, "name": "n"}}, {})])
+        self.addCleanup(fake.close)
+        env = dict(os.environ)
+        env.pop("WHEELIE_RESULTS_CODE", None)
+        with tempfile.TemporaryDirectory() as d, unittest.mock.patch.dict(os.environ, env, clear=True):
+            write_result(d)
+            self.assertEqual(submit.main(["--url", fake.url, d]), 0)
+        self.assertEqual(fake.requests[0][2], {"code": submit.PUBLIC_CODE})
 
 
 class MainTest(unittest.TestCase):

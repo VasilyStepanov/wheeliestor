@@ -19,16 +19,19 @@ name of the host does not leave the machine, only a hash of it. The server
 answers with a name that is made of the id, and the script prints it with a
 link, so that the results can be found in the server.
 
-The server takes a result with a token. The script gets it for a code (the
-code of an event, which the organizer gives) and keeps nothing: the token lives
-for a couple of hours. The server slows down the clients that submit too fast,
-and the script waits as long as it is told to.
+The server takes a result with a token. The script gets it for a code and keeps
+nothing: the token lives for a couple of hours. The code is in this file, in
+PUBLIC_CODE, and it is no secret: it tells the server which version of the
+script it talks to. When the owner of the server changes the code there, the
+scripts that have the old one are refused, and have to be updated. The server
+slows down the clients that submit too fast, and the script waits as long as it
+is told to.
 
 With --dry-run nothing is sent: the script says what it would send.
 
 Environment:
   WHEELIE_RESULTS_URL    the address of the server (instead of --url)
-  WHEELIE_RESULTS_CODE   the code of the event (instead of --code)
+  WHEELIE_RESULTS_CODE   another code than PUBLIC_CODE (instead of --code)
   WHEELIE_RESULTS_TOKEN  a token, if you have one (instead of --code)
   DOCKER                 the docker command, as for bench/run.sh
 """
@@ -50,6 +53,11 @@ import urllib.request
 import uuid
 
 SCHEMA = 1
+
+# The code that the server of results is asked for a token with. It is public
+# and gives nothing but the right to submit; the server can stop accepting it,
+# and then this version of the script is refused.
+PUBLIC_CODE = "wr1-537aa06f3d3cb5d1cb99"
 LAYER_NAMES = ("network", "copies", "storage", "io_uring", "scheduler", "code", "other")
 
 # The options of fio that are the parameters of the run itself; the rest of
@@ -354,8 +362,13 @@ class Server:
 
     def login(self):
         if not self.code:
-            raise Refused(401, "no token and no code: give --code or set WHEELIE_RESULTS_CODE")
-        self.token = self.call("POST", "/api/token", {"code": self.code})["token"]
+            raise Refused(401, "no token and no code")
+        try:
+            self.token = self.call("POST", "/api/token", {"code": self.code})["token"]
+        except Refused as refused:
+            if refused.status == 403:
+                raise Refused(403, "the server does not accept this version of wheeliestor any more: update it") from None
+            raise
 
     def submit(self, body, waits=20):
         """Sends one result. Waits when the server says to, logs in again when the token has expired."""
@@ -383,7 +396,8 @@ def main(argv=None):
                                      epilog="See the head of this file for what is sent.")
     parser.add_argument("paths", nargs="+", help="directories of results or .json files of fio")
     parser.add_argument("--url", default=os.environ.get("WHEELIE_RESULTS_URL"), help="the address of the server")
-    parser.add_argument("--code", default=os.environ.get("WHEELIE_RESULTS_CODE"), help="the code of the event")
+    parser.add_argument("--code", default=os.environ.get("WHEELIE_RESULTS_CODE") or PUBLIC_CODE,
+                        help="the code for a token (default: the public code of this script)")
     parser.add_argument("--token", default=os.environ.get("WHEELIE_RESULTS_TOKEN"), help="a token, instead of the code")
     parser.add_argument("--dry-run", action="store_true", help="say what would be sent and send nothing")
     args = parser.parse_args(argv)
@@ -422,6 +436,9 @@ def main(argv=None):
                 continue
             failed += 1
             print("FAIL  %s: %s (%s)" % (label, refused, refused.status))
+            if refused.status == 403:
+                # No result will be taken: the code is not accepted any more.
+                break
             for problem in refused.problems:
                 print("        - %s" % problem)
             continue

@@ -55,8 +55,7 @@ The run:
                     how long to record (default: 15, and not more than the
                     measured time less 2)
   --submit URL      send the result to a server of results when the run is
-                    over (see bench/submit.py; the code of the event is in
-                    WHEELIE_RESULTS_CODE)
+                    over (see bench/submit.py)
   -h, --help        show this help and exit
 
 Environment:
