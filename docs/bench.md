@@ -115,7 +115,7 @@ bench/matrix.sh --runtime 10 --ramp 3
 ```
 
 Варианты: `libc`, `alibc`, `uring` и `uring-ms` (`uring` с multishot). Нагрузки,
-каждая на каждом варианте (32 прогона), в том порядке, в каком они идут:
+каждая на каждом варианте (36 прогонов), в том порядке, в каком они идут:
 
 | Имя                  | Режим       | Блок | Глубина | Заданий |
 |----------------------|-------------|------|---------|---------|
@@ -123,6 +123,7 @@ bench/matrix.sh --runtime 10 --ramp 3
 | `randwrite_qd16_nj1` | `randwrite` | 4k   | 16      | 1       |
 | `randread_qd16_nj8`  | `randread`  | 4k   | 16      | 8       |
 | `randwrite_qd16_nj8` | `randwrite` | 4k   | 16      | 8       |
+| `seqwrite_4k_qd1_nj1` | `write`    | 4k   | 1       | 1       |
 | `randread_qd1_nj1`   | `randread`  | 4k   | 1       | 1       |
 | `randwrite_qd1_nj1`  | `randwrite` | 4k   | 1       | 1       |
 | `seqread_1m_nj4`     | `read`      | 1m   | 4       | 4       |
