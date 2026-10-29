@@ -517,17 +517,32 @@ def say_who(url, client):
     return 0
 
 
+class RussianFormatter(argparse.HelpFormatter):
+    def add_usage(self, usage, actions, groups, prefix=None):
+        super().add_usage(usage, actions, groups, "Использование: " if prefix is None else prefix)
+
+
+def russian(parser):
+    """The help of a parser in Russian: argparse has no Russian of its own here."""
+    parser.add_argument("-h", "--help", action="help", help="показать эту справку и выйти")
+    parser._positionals.title = "аргументы"
+    parser._optionals.title = "параметры"
+    return parser
+
+
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="Sends the results of bench/run.sh to a server of results.",
-                                     epilog="See the head of this file for what is sent.")
-    parser.add_argument("paths", nargs="*", help="directories of results or .json files of fio")
-    parser.add_argument("--url", default=os.environ.get("WHEELIE_RESULTS_URL"), help="the address of the server")
+    parser = argparse.ArgumentParser(description="Отправляет результаты bench/run.sh на сервер результатов.",
+                                     epilog="Что отправляется, описано в начале этого файла.",
+                                     formatter_class=RussianFormatter, add_help=False)
+    parser.add_argument("paths", nargs="*", help="каталоги результатов или .json-файлы fio")
+    parser.add_argument("--url", default=os.environ.get("WHEELIE_RESULTS_URL"), help="адрес сервера")
     parser.add_argument("--code", default=os.environ.get("WHEELIE_RESULTS_CODE") or PUBLIC_CODE,
-                        help="the code for a token (default: the public code of this script)")
-    parser.add_argument("--token", default=os.environ.get("WHEELIE_RESULTS_TOKEN"), help="a token, instead of the code")
-    parser.add_argument("--dry-run", action="store_true", help="say what would be sent and send nothing")
-    parser.add_argument("--whoami", action="store_true", help="say the name of this client and the link of its results, and stop")
-    parser.add_argument("--no-whoami", action="store_true", help="do not say the name at the start (the caller has said it)")
+                        help="код для токена (по умолчанию: публичный код этого скрипта)")
+    parser.add_argument("--token", default=os.environ.get("WHEELIE_RESULTS_TOKEN"), help="токен вместо кода")
+    parser.add_argument("--dry-run", action="store_true", help="сказать, что было бы отправлено, и ничего не отправлять")
+    parser.add_argument("--whoami", action="store_true", help="сказать имя этого клиента и ссылку на его результаты и остановиться")
+    parser.add_argument("--no-whoami", action="store_true", help="не говорить имя в начале (вызывающий уже сказал)")
+    russian(parser)
     args = parser.parse_args(argv)
 
     if args.whoami:

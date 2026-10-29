@@ -140,20 +140,39 @@ def build(window_s, fio_path, server=None, client=None):
     return profile
 
 
-def main(argv=None):
-    parser = argparse.ArgumentParser(description="Where the cycles of a process go.")
-    sub = parser.add_subparsers(dest="command", required=True)
+class RussianFormatter(argparse.HelpFormatter):
+    def add_usage(self, usage, actions, groups, prefix=None):
+        super().add_usage(usage, actions, groups, "Использование: " if prefix is None else prefix)
 
-    one = sub.add_parser("layers", help="the layers of one recording of perf")
+
+def russian(parser):
+    """The help of a parser in Russian: argparse has no Russian of its own here."""
+    parser.add_argument("-h", "--help", action="help", help="показать эту справку и выйти")
+    parser._positionals.title = "аргументы"
+    parser._optionals.title = "параметры"
+    return parser
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description="Куда уходят циклы процесса.",
+                                     formatter_class=RussianFormatter, add_help=False)
+    sub = parser.add_subparsers(dest="command", required=True, title="команды")
+
+    one = sub.add_parser("layers", help="доли слоёв одной записи perf",
+                         formatter_class=RussianFormatter, add_help=False)
     one.add_argument("data")
     one.add_argument("--process", default="process")
+    russian(one)
 
-    both = sub.add_parser("build", help="the profile of a run, for bench/submit.py")
+    both = sub.add_parser("build", help="профиль прогона, для bench/submit.py",
+                          formatter_class=RussianFormatter, add_help=False)
     both.add_argument("--server")
     both.add_argument("--client")
-    both.add_argument("--window", type=float, required=True, help="seconds that were recorded")
-    both.add_argument("--fio", required=True, help="the JSON of fio of the run")
+    both.add_argument("--window", type=float, required=True, help="сколько секунд записано")
+    both.add_argument("--fio", required=True, help="JSON fio этого прогона")
     both.add_argument("--out", required=True)
+    russian(both)
+    russian(parser)
 
     args = parser.parse_args(argv)
     try:

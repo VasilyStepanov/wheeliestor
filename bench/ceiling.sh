@@ -12,38 +12,39 @@ DOCKER=${DOCKER:-docker}
 
 usage() {
     cat << 'USAGE'
-Usage: bench/ceiling.sh [options]
+Использование: bench/ceiling.sh [параметры]
 
-  --out DIR         where the results go (default: results/ceiling)
-  --runtime SEC     measured time of each run (default: 15)
-  --ramp SEC        time before the measure, thrown away (default: 5)
-  --size SIZE       size of the test file on the volume (default: 1g)
-  --volume NAME     the docker volume of the stand (default: the one that
-                    `docker volume ls` shows ending in _data)
-  --sync 0|1        1 makes the writes durable before they finish, as
-                    bench/run.sh --sync 1 does: fio with sync=dsync, which is
-                    what the server asks of the kernel (default: 1)
-  --stand-file      measure the file of the server (disk.img) instead of a new
-                    one: the speed of writes of a virtual disk can differ
-                    between files and between hours, and this is the number to
-                    compare the results of bench/run.sh with
-  --device DEV      also read this block device, read only (e.g. /dev/sda)
-  --image NAME      the image with fio (default: wheeliestor-client)
-  -h, --help        show this help and exit
+  --out DIR         куда класть результаты (по умолчанию: results/ceiling)
+  --runtime SEC     замеряемое время каждого прогона (по умолчанию: 15)
+  --ramp SEC        разгон перед замером, его отбрасывают (по умолчанию: 5)
+  --size SIZE       размер тестового файла на томе (по умолчанию: 1g)
+  --volume NAME     docker-том стенда (по умолчанию: тот, что `docker volume ls`
+                    показывает с именем на _data)
+  --sync 0|1        1: запись надёжна к моменту завершения, как у
+                    bench/run.sh --sync 1: fio с sync=dsync, это то, что
+                    сервер просит у ядра (по умолчанию: 1)
+  --stand-file      мерить файл сервера (disk.img) вместо нового: скорость
+                    записи виртуального диска может различаться между файлами и
+                    между часами, и это число надо сравнивать с результатами
+                    bench/run.sh
+  --device DEV      ещё и читать этот блочный диск, только чтение (например,
+                    /dev/sda)
+  --image NAME      образ с fio (по умолчанию: wheeliestor-client)
+  -h, --help        показать эту справку и выйти
 
-The runs, each with O_DIRECT:
+Прогоны, все с O_DIRECT:
 
-  io_uring   randread 4k   depth 1, 16, 64 with one job; 16 and 64 with 8 jobs
-  io_uring   randwrite 4k  the same
-  io_uring   read and write 1m, depth 4, 4 jobs
-  psync      randread and randwrite 4k with 1, 8 and 16 jobs; read and write
-             1m with 4 jobs (a blocking call per request: what libc can do)
-  device     (with --device) randread 4k and read 1m, no file system
+  io_uring   randread 4k   глубина 1, 16, 64 с одним заданием; 16 и 64 с 8 заданиями
+  io_uring   randwrite 4k  то же
+  io_uring   read и write 1m, глубина 4, 4 задания
+  psync      randread и randwrite 4k с 1, 8 и 16 заданиями; read и write 1m с
+             4 заданиями (блокирующий вызов на запрос: что умеет libc)
+  device     (с --device) randread 4k и read 1m, без файловой системы
 
-Environment:
-  DOCKER            the docker command (default: docker; `DOCKER="sudo docker"`)
+Окружение:
+  DOCKER            команда docker (по умолчанию: docker; `DOCKER="sudo docker"`)
 
-The images have to be built already (bench/run.sh builds them).
+Образы должны быть уже собраны (их собирает bench/run.sh).
 USAGE
 }
 

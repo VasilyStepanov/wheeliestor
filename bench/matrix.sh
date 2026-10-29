@@ -10,47 +10,48 @@ set -eu
 
 usage() {
     cat << 'USAGE'
-Usage: bench/matrix.sh [options] [options of bench/run.sh]
+Использование: bench/matrix.sh [параметры] [параметры bench/run.sh]
 
-  --out DIR         where the results go (default: results/matrix-DATE)
-  --variants LIST   the variants, a quoted list (default: "alibc uring libc uring-ms")
-  --seed N          the seed of the order of the variants (default: the time; it is
-                    printed, so that an order can be repeated)
-  --dry-run         only say what would be run
-  --no-build        do not build the images
-  -h, --help        show this help and exit
+  --out DIR         куда класть результаты (по умолчанию: results/matrix-ДАТА)
+  --variants LIST   варианты, список в кавычках (по умолчанию: "alibc uring libc uring-ms")
+  --seed N          зерно порядка вариантов (по умолчанию: время; оно
+                    печатается, чтобы порядок можно было повторить)
+  --dry-run         только сказать, что будет запущено
+  --no-build        не собирать образы
+  -h, --help        показать эту справку и выйти
 
-A variant is libc, alibc, uring or uring-ms (uring with multishot receive).
-What is not an option of this script, such as --runtime, --ramp, --direct,
---sync, --threads or --size, goes to bench/run.sh for every run. A run lasts
-15 seconds after a ramp of 5 (the runs of the matrix are few, so that each of
-them can be long); --runtime and --ramp say otherwise.
+Вариант: libc, alibc, uring или uring-ms (uring с multishot recv).
+Всё, что не параметр этого скрипта, например --runtime, --ramp, --direct,
+--sync, --threads или --size, передаётся в bench/run.sh для каждого прогона.
+Прогон длится 15 секунд после разгона 5 (прогонов в матрице немного, чтобы
+каждый мог быть долгим); --runtime и --ramp меняют это.
 
-The loads, each of which is run for every variant:
+Нагрузки, каждая на каждом варианте:
 
-  randread  4k, depth 16, one job and 8 jobs; depth 1, one job
-  randwrite 4k, depth 16, one job and 8 jobs; depth 1, one job
-  write     4k, depth 1, one job (the commit of a log: one small write at a time)
-  read      4k, depth 1, one job (the same one, read)
-  read      1m, depth 4, 4 jobs
-  write     1m, depth 4, 4 jobs
+  randread  4k, глубина 16, одно задание и 8 заданий; глубина 1, одно задание
+  randwrite 4k, глубина 16, одно задание и 8 заданий; глубина 1, одно задание
+  write     4k, глубина 1, одно задание (коммит журнала: одна небольшая запись
+            за раз)
+  read      4k, глубина 1, одно задание (то же, чтение)
+  read      1m, глубина 4, 4 задания
+  write     1m, глубина 4, 4 задания
 
-The order is made for a chart of results that is filled as early as it can be
-(bench/run.sh --submit sends every result when it is measured): the loads that
-tell the most come first, and the first two variants of the first load are the
-two that the chart compares by default, so the first point is there after two
-runs. The variants of one load are run next to each other, in a random order
-that is made again for every load, so that the first run after a heavy load,
-which is a little slower, and the run that warms something up are not always
-those of the same variant. Only in the first load do alibc and uring come
-first, in a random order between them.
+Порядок сделан для графика результатов, который наполняется как можно раньше
+(bench/run.sh --submit отправляет каждый результат сразу после замера):
+нагрузки, которые говорят больше всего, идут первыми, а первые два варианта
+первой нагрузки это те, что график сравнивает по умолчанию, так что первая
+точка появляется после двух прогонов. Варианты одной нагрузки идут подряд, в
+случайном порядке, который для каждой нагрузки свой: первый прогон после тяжёлой
+нагрузки немного медленнее, и что-то может прогреваться, так что первым не
+должен быть всегда один и тот же вариант. Только в первой нагрузке первыми идут
+alibc и uring, в случайном порядке между собой.
 
-A run that has a result in the directory already is not run again, so a
-matrix that was interrupted goes on where it stopped when it is run again with
-the same --out.
+Прогон, у которого в каталоге уже есть результат, не запускается снова, так что
+прерванная матрица продолжается с того места, где остановилась, если запустить
+её снова с тем же --out.
 
-Environment:
-  DOCKER            the docker command, as for bench/run.sh
+Окружение:
+  DOCKER            команда docker, как у bench/run.sh
 USAGE
 }
 
