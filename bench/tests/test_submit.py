@@ -209,6 +209,29 @@ class CpuPowerTest(unittest.TestCase):
             finally:
                 submit.glob.glob, submit.read_text = real_glob, real_read
 
+    def mac_with(self, pmset, batt):
+        real = submit.run_text
+        submit.run_text = lambda command, env=None: {"-g": pmset, "batt": batt}.get(command[-1])
+        try:
+            return submit.mac_power()
+        finally:
+            submit.run_text = real
+
+    PMSET = " standby 1\n sleep 1 (sleep prevented by powerd)\n displaysleep 2\n lowpowermode %s\n womp 0\n"
+
+    def test_a_mac_says_its_mode_of_power(self):
+        on_mains = "Now drawing from 'AC Power'\n -InternalBattery-0 (id=1)\t100%; charged; 0:00 remaining"
+        self.assertEqual(self.mac_with(self.PMSET % 0, on_mains),
+                         {"governor": "automatic", "cpu_driver": "pmset", "energy_preference": "ac"})
+        on_battery = "Now drawing from 'Battery Power'\n -InternalBattery-0 (id=1)\t71%; discharging; 4:10 remaining"
+        self.assertEqual(self.mac_with(self.PMSET % 1, on_battery),
+                         {"governor": "low-power", "cpu_driver": "pmset", "energy_preference": "battery"})
+        self.assertEqual(self.mac_with(" powermode 2\n", None)["governor"], "high-power")
+
+    def test_a_mac_without_the_setting_says_nothing(self):
+        self.assertEqual(self.mac_with(" sleep 1\n displaysleep 2\n", None), {})
+        self.assertEqual(self.mac_with(None, None), {})
+
     def test_a_machine_that_performs(self):
         cpu = "sys/devices/system/cpu"
         files = {}
