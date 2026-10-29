@@ -358,6 +358,15 @@ def build_submission(json_path, machine):
     elif settings.get("WHEELIE_THREADS", "").isdigit():
         threads = int(settings["WHEELIE_THREADS"])
 
+    # The variant of a result is that of the server; the client is told only if it
+    # is another one, so that a server of results that does not know it takes the rest.
+    client_backend = options["wheelie_backend"]
+    client_multishot = options.get("wheelie_multishot", "0") not in ("0", "")
+    server_backend = settings.get("WHEELIE_BACKEND") or client_backend
+    server_multishot = (
+        settings["WHEELIE_MULTISHOT"] not in ("0", "") if "WHEELIE_MULTISHOT" in settings else client_multishot
+    )
+
     run = {
         "name": options.get("name", os.path.basename(base))[:200],
         "mode": options["rw"],
@@ -369,13 +378,16 @@ def build_submission(json_path, machine):
         "runtime": int(options["runtime"]),
         "ramp": int(options.get("ramp_time", 0) or 0),
         "size": options["size"],
-        "backend": options["wheelie_backend"],
-        "multishot": options.get("wheelie_multishot", "0") not in ("0", ""),
+        "backend": server_backend,
+        "multishot": server_multishot,
         "direct": settings.get("WHEELIE_DIRECT", "1") != "0",
         "data": settings.get("WHEELIE_DATA") or "disk",
         "transport": settings.get("WHEELIE_TRANSPORT") or "tcp",
         "options": {k: str(v)[:256] for k, v in options.items() if k not in KNOWN_OPTIONS and v != ""},
     }
+    if (client_backend, client_multishot) != (server_backend, server_multishot):
+        run["client_backend"] = client_backend
+        run["client_multishot"] = client_multishot
     for key, name in (("server_cpus", "WHEELIE_SERVER_CPUS"), ("client_cpus", "WHEELIE_CLIENT_CPUS")):
         if settings.get(name):
             run[key] = settings[name]

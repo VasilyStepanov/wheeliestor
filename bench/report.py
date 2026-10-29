@@ -57,6 +57,11 @@ class Result:
         if backend is None:
             raise ValueError("not a result of the wheelie engine")
         multishot = options.get("wheelie_multishot", "0") not in ("0", "")
+        # The variant is that of the server, which the client may not share.
+        settings = settings or {}
+        backend = settings.get("WHEELIE_BACKEND") or backend
+        if "WHEELIE_MULTISHOT" in settings:
+            multishot = settings["WHEELIE_MULTISHOT"] not in ("0", "")
         self.variant = backend + ("-ms" if multishot else "")
         self.rw = options["rw"]
         self.bs = options["bs"]
@@ -64,7 +69,6 @@ class Result:
         self.numjobs = int(options["numjobs"])
         self.sync = int(options.get("sync", "0") or 0)
         self.timestamp = timestamp
-        settings = settings or {}
         complete_min = int(options.get("iodepth_batch_complete_min", "1"))
         complete_max = max(complete_min, int(options.get("iodepth_batch_complete_max", "0")))
         submit = int(options.get("iodepth_batch", options.get("iodepth_batch_submit", "1")))

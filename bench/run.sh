@@ -32,9 +32,16 @@ The load:
   --server-cpus LIST CPUs allowed to the server, e.g. 8-11 (default: all)
   --client-cpus LIST CPUs for fio jobs, one per job, e.g. 12-19 (default: all)
 
-The variant, which the server and the client both get:
+The variant, which the server and the client both get, unless the client is told
+to be another one:
   --backend NAME    libc, alibc or uring (default: uring)
   --multishot       receive with one multishot receive instead of one per chunk
+  --client-backend NAME
+                    the backend of the client, if it is not that of the server
+                    (default: --backend)
+  --client-multishot 0|1
+                    multishot receive in the client (default: --multishot if the
+                    client has the backend of the server, and 0 if not)
   --direct 0|1      the server opens its file with O_DIRECT (default: 1)
   --data disk|tmpfs|device
                     where the server's file is: on the volume of a disk, in
@@ -65,7 +72,7 @@ USAGE
 }
 
 bs=4k mode=randread depth=16 numjobs=1 queues=1 sync=1 runtime=10 ramp=3 size=1g
-backend=uring multishot=0 direct=1 data=disk threads=""
+backend=uring multishot=0 client_backend="" client_multishot="" direct=1 data=disk threads=""
 complete_max="" complete_min="" submit_batch="" server_cpus="" client_cpus=""
 name="" out=results build=1 keep=0
 profile=0 profile_window="" submit_url=""
@@ -93,6 +100,8 @@ while [ $# -gt 0 ]; do
     --client-cpus) client_cpus=$2; shift 2 ;;
     --backend) backend=$2; shift 2 ;;
     --multishot) multishot=1; shift ;;
+    --client-backend) client_backend=$2; shift 2 ;;
+    --client-multishot) client_multishot=$2; shift 2 ;;
     --direct) direct=$2; shift 2 ;;
     --data) data=$2; shift 2 ;;
     --threads) threads=$2; shift 2 ;;
@@ -109,6 +118,23 @@ case $backend in
 libc | alibc | uring) ;;
 *) echo "bench/run.sh: --backend must be libc, alibc or uring" >&2; exit 2 ;;
 esac
+[ -n "$client_backend" ] || client_backend=$backend
+case $client_backend in
+libc | alibc | uring) ;;
+*) echo "bench/run.sh: --client-backend must be libc, alibc or uring" >&2; exit 2 ;;
+esac
+if [ -z "$client_multishot" ]; then
+    client_multishot=0
+    [ "$client_backend" = "$backend" ] && client_multishot=$multishot
+fi
+case $client_multishot in
+0 | 1) ;;
+*) echo "bench/run.sh: --client-multishot must be 0 or 1" >&2; exit 2 ;;
+esac
+if [ "$client_multishot" = 1 ] && [ "$client_backend" != uring ]; then
+    echo "bench/run.sh: multishot receive is only for the uring backend of the client" >&2
+    exit 2
+fi
 case $direct in
 0 | 1) ;;
 *) echo "bench/run.sh: --direct must be 0 or 1" >&2; exit 2 ;;
@@ -215,12 +241,18 @@ if [ "$multishot" = 1 ]; then
     ms_name=_ms
     ms_text=" multishot"
 fi
+# The name of a run says who the client is only when it is not the server's variant.
+client_name=""
+if [ "$client_backend" != "$backend" ] || [ "$client_multishot" != "$multishot" ]; then
+    client_name=_client-$client_backend
+    [ "$client_multishot" = 1 ] && client_name=${client_name}-ms
+fi
 direct_text=buffered
 if [ "$direct" = 1 ]; then
     direct_text=O_DIRECT
 fi
 
-[ -n "$name" ] || name="${mode}_bs${bs}_qd${depth}_nj${numjobs}${queues_name}_${backend}${ms_name}_sync${sync}"
+[ -n "$name" ] || name="${mode}_bs${bs}_qd${depth}_nj${numjobs}${queues_name}_${backend}${ms_name}${client_name}_sync${sync}"
 mkdir -p "$out"
 out_abs=$(cd "$out" && pwd)
 
@@ -303,6 +335,9 @@ else
     fi
 fi
 
+if [ -n "$client_name" ]; then
+    echo "== client: ${client_name#_client-}, not the variant of the server"
+fi
 echo "== fio: $mode bs=$bs depth=$depth numjobs=$numjobs queues=$queues sync=$sync, ${ramp}s ramp and ${runtime}s measured"
 # fio prints its progress, a line a second (the ETA), and then its normal output
 # and its JSON, all to its standard output: that is what is kept, and told apart
@@ -312,7 +347,7 @@ run_fio() {
         fio --name="$name" \
         --ioengine=external:/usr/local/lib/wheelie.so \
         --filename='wheelie\://server\:39900' \
-        --wheelie_backend="$backend" --wheelie_multishot="$multishot" \
+        --wheelie_backend="$client_backend" --wheelie_multishot="$client_multishot" \
         --rw="$mode" --bs="$bs" --iodepth="$depth" --numjobs="$numjobs" \
         --wheelie_queues="$queues" \
         --sync="$sync" --size="$size" \
