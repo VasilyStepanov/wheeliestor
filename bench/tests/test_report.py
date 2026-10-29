@@ -335,10 +335,10 @@ class MatrixTest(unittest.TestCase):
     def test_a_run_is_long_unless_it_is_told_otherwise(self):
         result = self.dry_run("--variants", "libc")
         runs = [line for line in result.stdout.splitlines() if "bench/run.sh" in line]
-        self.assertTrue(all("--runtime 30 --ramp 5" in line for line in runs))
+        self.assertTrue(all("--runtime 15 --ramp 5" in line for line in runs))
         result = self.dry_run("--variants", "libc", "--ramp", "2")
         runs = [line for line in result.stdout.splitlines() if "bench/run.sh" in line]
-        self.assertTrue(all("--runtime 30" in line and line.count("--ramp") == 1 for line in runs))
+        self.assertTrue(all("--runtime 15" in line and line.count("--ramp") == 1 for line in runs))
 
     def test_an_unknown_variant_is_refused(self):
         result = self.dry_run("--variants", "libc epoll")

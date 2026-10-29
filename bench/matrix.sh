@@ -23,7 +23,7 @@ Usage: bench/matrix.sh [options] [options of bench/run.sh]
 A variant is libc, alibc, uring or uring-ms (uring with multishot receive).
 What is not an option of this script, such as --runtime, --ramp, --direct,
 --sync, --threads or --size, goes to bench/run.sh for every run. A run lasts
-30 seconds after a ramp of 5 (the runs of the matrix are few, so that each of
+15 seconds after a ramp of 5 (the runs of the matrix are few, so that each of
 them can be long); --runtime and --ramp say otherwise.
 
 The loads, each of which is run for every variant:
@@ -68,7 +68,7 @@ LOADS=(
 out="" variants="alibc uring libc uring-ms" dry_run=0 build=1 seed=""
 passed=()
 # A run is long unless the caller says otherwise.
-runtime_default=(--runtime 30) ramp_default=(--ramp 5)
+runtime_default=(--runtime 15) ramp_default=(--ramp 5)
 
 while [ $# -gt 0 ]; do
     case $1 in
