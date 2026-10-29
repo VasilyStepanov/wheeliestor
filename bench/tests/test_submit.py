@@ -40,14 +40,15 @@ def fio_json(rw="randwrite", bs="4k", depth=16, numjobs=8, backend="uring", mult
 MACHINE = {"client_id": "a" * 32, "kernel": "7.0", "cpu_model": "cpu", "cpus": 8, "memory_mb": 1024}
 
 
-def write_result(directory, name="case", settings=True, banner=True, profile=None, plain=None, **kw):
+def write_result(directory, name="case", settings=True, banner=True, profile=None, plain=None,
+                 server_variant="WHEELIE_BACKEND=uring\n", **kw):
     path = os.path.join(directory, name + ".json")
     with open(path, "w") as handle:
         handle.write("fio: a warning in front of the JSON\n")
         json.dump(fio_json(**kw), handle)
     if settings:
         with open(os.path.join(directory, name + ".settings"), "w") as handle:
-            handle.write("WHEELIE_BACKEND=uring\nWHEELIE_DIRECT=1\nWHEELIE_DATA=tmpfs\nWHEELIE_THREADS=\n"
+            handle.write(server_variant + "WHEELIE_DIRECT=1\nWHEELIE_DATA=tmpfs\nWHEELIE_THREADS=\n"
                          "WHEELIE_SERVER_CPUS=0-3\nWHEELIE_CLIENT_CPUS=\n")
     if banner:
         with open(os.path.join(directory, name + ".server"), "w") as handle:
@@ -62,6 +63,21 @@ def write_result(directory, name="case", settings=True, banner=True, profile=Non
 
 
 class BuildTest(unittest.TestCase):
+    def test_the_variant_is_that_of_the_server_and_the_client_is_told_if_it_differs(self):
+        server = "WHEELIE_BACKEND=uring\nWHEELIE_MULTISHOT=1\n"
+        with tempfile.TemporaryDirectory() as d:
+            body = submit.build_submission(write_result(d, server_variant=server, backend="libc"), MACHINE)
+        run = body["run"]
+        self.assertEqual((run["backend"], run["multishot"]), ("uring", True))
+        self.assertEqual((run["client_backend"], run["client_multishot"]), ("libc", False))
+
+    def test_the_client_is_not_told_if_it_is_the_variant_of_the_server(self):
+        server = "WHEELIE_BACKEND=uring\nWHEELIE_MULTISHOT=1\n"
+        with tempfile.TemporaryDirectory() as d:
+            body = submit.build_submission(write_result(d, server_variant=server, multishot=True), MACHINE)
+        self.assertNotIn("client_backend", body["run"])
+        self.assertNotIn("client_multishot", body["run"])
+
     def test_the_run_comes_from_fio_and_the_files_next_to_it(self):
         with tempfile.TemporaryDirectory() as d:
             body = submit.build_submission(write_result(d, multishot=True), MACHINE)

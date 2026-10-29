@@ -44,12 +44,21 @@ class Results:
         test.addCleanup(self.directory.cleanup)
         self.path = self.directory.name
 
-    def add(self, name, **kwargs):
+    def add(self, name, settings=None, **kwargs):
         with open(os.path.join(self.path, name + ".json"), "w") as handle:
             json.dump(fio_json(**kwargs), handle)
+        if settings:
+            with open(os.path.join(self.path, name + ".settings"), "w") as handle:
+                handle.write(settings)
 
 
 class ReportTest(unittest.TestCase):
+    def test_the_variant_is_that_of_the_server(self):
+        results = Results(self)
+        results.add("a", settings="WHEELIE_BACKEND=uring\nWHEELIE_MULTISHOT=1\n", rw="randread", bs="4k",
+                    depth=1, numjobs=1, backend="libc", multishot=False, iops=5000, bw_kib=20000)
+        self.assertEqual(list(report.read_results([results.path]).values())[0].keys(), {"uring-ms"})
+
     def results(self):
         results = Results(self)
         for backend, multishot, iops in (("libc", False, 5334), ("uring", False, 4796),
