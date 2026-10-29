@@ -26,6 +26,7 @@ The loads, each of which is run for every variant:
 
   randread  4k, depth 16, one job and 8 jobs; depth 1, one job
   randwrite 4k, depth 16, one job and 8 jobs; depth 1, one job
+  write     4k, depth 1, one job (the commit of a log: one small write at a time)
   read      1m, depth 4, 4 jobs
   write     1m, depth 4, 4 jobs
 
@@ -53,6 +54,7 @@ LOADS=(
     randwrite_qd16_nj1:randwrite:4k:16:1
     randread_qd16_nj8:randread:4k:16:8
     randwrite_qd16_nj8:randwrite:4k:16:8
+    seqwrite_4k_qd1_nj1:write:4k:1:1
     randread_qd1_nj1:randread:4k:1:1
     randwrite_qd1_nj1:randwrite:4k:1:1
     seqread_1m_nj4:read:1m:4:4

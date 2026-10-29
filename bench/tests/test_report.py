@@ -246,10 +246,12 @@ class MatrixTest(unittest.TestCase):
         result = self.dry_run()
         self.assertEqual(result.returncode, 0, result.stderr)
         runs = [line for line in result.stdout.splitlines() if "bench/run.sh" in line]
-        self.assertEqual(len(runs), 4 * 8)
+        self.assertEqual(len(runs), 4 * 9)
         multishot = next(r for r in runs if "randread_qd16_nj8_uring-ms" in r)
         self.assertIn("--mode randread --bs 4k --depth 16 --numjobs 8 "
                       "--backend uring --multishot", multishot)
+        journal = next(r for r in runs if "seqwrite_4k_qd1_nj1_libc" in r)
+        self.assertIn("--mode write --bs 4k --depth 1 --numjobs 1 --backend libc", journal)
         sequential = next(r for r in runs if "seqwrite_1m_nj4_libc" in r)
         self.assertIn("--mode write --bs 1m --depth 4 --numjobs 4 --backend libc",
                       sequential)
@@ -300,14 +302,14 @@ class MatrixTest(unittest.TestCase):
         lines = result.stdout.splitlines()
         building = next(i for i, l in enumerate(lines) if "building the images" in l)
         who = next(i for i, l in enumerate(lines) if l.startswith("== your client id") or "== you are" in l)
-        first = next(i for i, l in enumerate(lines) if "[1/32]" in l)
+        first = next(i for i, l in enumerate(lines) if "[1/36]" in l)
         self.assertLess(building, who)
         self.assertEqual(who + 1, first)
 
     def test_what_is_not_its_own_goes_to_run_sh(self):
         result = self.dry_run("--variants", "libc", "--runtime", "5", "--direct", "0")
         runs = [line for line in result.stdout.splitlines() if "bench/run.sh" in line]
-        self.assertEqual(len(runs), 8)
+        self.assertEqual(len(runs), 9)
         self.assertTrue(all(line.endswith("--runtime 5 --direct 0") for line in runs))
 
     def test_an_unknown_variant_is_refused(self):
