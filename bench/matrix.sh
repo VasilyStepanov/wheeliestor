@@ -20,12 +20,14 @@ Usage: bench/matrix.sh [options] [options of bench/run.sh]
 
 A variant is libc, alibc, uring or uring-ms (uring with multishot receive).
 What is not an option of this script, such as --runtime, --ramp, --direct,
---sync, --threads or --size, goes to bench/run.sh for every run.
+--sync, --threads or --size, goes to bench/run.sh for every run. A run lasts
+30 seconds after a ramp of 5 (the runs of the matrix are few, so that each of
+them can be long); --runtime and --ramp say otherwise.
 
 The loads, each of which is run for every variant:
 
-  randread  4k, depth 16, one job and 8 jobs; depth 1, one job
-  randwrite 4k, depth 16, one job and 8 jobs; depth 1, one job
+  randread  4k, depth 16, one job and 8 jobs
+  randwrite 4k, depth 16, one job and 8 jobs
   write     4k, depth 1, one job (the commit of a log: one small write at a time)
   read      1m, depth 4, 4 jobs
   write     1m, depth 4, 4 jobs
@@ -55,14 +57,14 @@ LOADS=(
     randread_qd16_nj8:randread:4k:16:8
     randwrite_qd16_nj8:randwrite:4k:16:8
     seqwrite_4k_qd1_nj1:write:4k:1:1
-    randread_qd1_nj1:randread:4k:1:1
-    randwrite_qd1_nj1:randwrite:4k:1:1
     seqread_1m_nj4:read:1m:4:4
     seqwrite_1m_nj4:write:1m:4:4
 )
 
 out="" variants="alibc uring libc uring-ms" dry_run=0 build=1
 passed=()
+# A run is long unless the caller says otherwise.
+runtime_default=(--runtime 30) ramp_default=(--ramp 5)
 
 while [ $# -gt 0 ]; do
     case $1 in
@@ -71,6 +73,8 @@ while [ $# -gt 0 ]; do
     --dry-run) dry_run=1; shift ;;
     --no-build) build=0; shift ;;
     -h | --help) usage; exit 0 ;;
+    --runtime) runtime_default=(); passed+=("$1"); shift ;;
+    --ramp) ramp_default=(); passed+=("$1"); shift ;;
     *) passed+=("$1"); shift ;;
     esac
 done
@@ -130,7 +134,8 @@ for load in "${LOADS[@]}"; do
         fi
         command=(bench/run.sh --no-build --name "$run_name" --out "$out"
             --mode "$mode" --bs "$bs" --depth "$depth" --numjobs "$numjobs"
-            $(variant_options "$variant") ${passed[@]+"${passed[@]}"})
+            $(variant_options "$variant") ${runtime_default[@]+"${runtime_default[@]}"} ${ramp_default[@]+"${ramp_default[@]}"}
+            ${passed[@]+"${passed[@]}"})
         echo "== [$number/$total] ${command[*]}"
         if [ "$dry_run" = 0 ]; then
             "${command[@]}" > "$out/run.log" 2>&1 || {
