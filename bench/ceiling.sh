@@ -16,7 +16,7 @@ Usage: bench/ceiling.sh [options]
 
   --out DIR         where the results go (default: results/ceiling)
   --runtime SEC     measured time of each run (default: 15)
-  --ramp SEC        time before the measure, thrown away (default: 3)
+  --ramp SEC        time before the measure, thrown away (default: 5)
   --size SIZE       size of the test file on the volume (default: 1g)
   --volume NAME     the docker volume of the stand (default: the one that
                     `docker volume ls` shows ending in _data)
@@ -47,7 +47,7 @@ The images have to be built already (bench/run.sh builds them).
 USAGE
 }
 
-out=results/ceiling runtime=15 ramp=3 size=1g volume="" device="" image=wheeliestor-client
+out=results/ceiling runtime=15 ramp=5 size=1g volume="" device="" image=wheeliestor-client
 stand_file=0 sync=1
 
 while [ $# -gt 0 ]; do

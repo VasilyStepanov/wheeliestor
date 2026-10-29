@@ -246,7 +246,7 @@ class MatrixTest(unittest.TestCase):
         result = self.dry_run()
         self.assertEqual(result.returncode, 0, result.stderr)
         runs = [line for line in result.stdout.splitlines() if "bench/run.sh" in line]
-        self.assertEqual(len(runs), 4 * 9)
+        self.assertEqual(len(runs), 4 * 8)
         multishot = next(r for r in runs if "randread_qd16_nj8_uring-ms" in r)
         self.assertIn("--mode randread --bs 4k --depth 16 --numjobs 8 "
                       "--backend uring --multishot", multishot)
@@ -267,7 +267,7 @@ class MatrixTest(unittest.TestCase):
 
     def test_the_first_point_of_the_default_chart_comes_after_two_runs(self):
         names = self.runs_of()
-        self.assertEqual(names[:2], ["randread_qd16_nj1_alibc", "randread_qd16_nj1_uring"])
+        self.assertEqual(set(names[:2]), {"randread_qd16_nj1_alibc", "randread_qd16_nj1_uring"})
         # The loads that tell the most come first, the long blocks last.
         loads = []
         for name in names:
@@ -277,15 +277,33 @@ class MatrixTest(unittest.TestCase):
         self.assertEqual(loads[0], "randread_qd16_nj1")
         self.assertEqual(loads[-2:], ["seqread_1m_nj4", "seqwrite_1m_nj4"])
 
-    def test_the_variant_that_starts_a_load_changes(self):
-        names = self.runs_of()
-        starts = [names[i].rsplit("_", 1)[1] if not names[i].endswith("uring-ms") else "uring-ms"
-                  for i in range(0, len(names), 4)]
-        self.assertEqual(starts[:4], ["alibc", "uring", "libc", "uring-ms"])
-        # The variants of one load are run next to each other.
+    @staticmethod
+    def variant_of(name):
+        return "uring-ms" if name.endswith("uring-ms") else name.rsplit("_", 1)[1]
+
+    def test_the_order_of_the_variants_is_random_for_every_load(self):
+        names = self.runs_of("--seed", "1")
+        # The variants of one load are run next to each other, each once.
         for i in range(0, len(names), 4):
             self.assertEqual(len({n.rsplit("_", 1)[0] if not n.endswith("uring-ms") else n[: -len("_uring-ms")]
                                   for n in names[i:i + 4]}), 1)
+            self.assertEqual({self.variant_of(n) for n in names[i:i + 4]},
+                             {"libc", "alibc", "uring", "uring-ms"})
+        # No variant is always the first, and the orders of the loads are not all one.
+        starts = set()
+        orders = set()
+        for seed in range(1, 21):
+            names = self.runs_of("--seed", str(seed))
+            variants = [self.variant_of(n) for n in names]
+            starts |= {variants[i] for i in range(0, len(variants), 4)}
+            orders |= {tuple(variants[i:i + 4]) for i in range(4, len(variants), 4)}
+        self.assertEqual(starts, {"libc", "alibc", "uring", "uring-ms"})
+        self.assertGreater(len(orders), 4)
+
+    def test_a_seed_repeats_the_order(self):
+        self.assertEqual(self.runs_of("--seed", "5"), self.runs_of("--seed", "5"))
+        self.assertNotEqual(self.runs_of("--seed", "5"), self.runs_of("--seed", "6"))
+        self.assertIn("--seed 5", self.dry_run("--seed", "5").stdout)
 
     def test_the_name_of_the_client_is_told_after_the_build_and_before_the_first_run(self):
         import tempfile
@@ -302,15 +320,25 @@ class MatrixTest(unittest.TestCase):
         lines = result.stdout.splitlines()
         building = next(i for i, l in enumerate(lines) if "building the images" in l)
         who = next(i for i, l in enumerate(lines) if l.startswith("== your client id") or "== you are" in l)
-        first = next(i for i, l in enumerate(lines) if "[1/36]" in l)
+        first = next(i for i, l in enumerate(lines) if "[1/32]" in l)
         self.assertLess(building, who)
         self.assertEqual(who + 1, first)
 
     def test_what_is_not_its_own_goes_to_run_sh(self):
         result = self.dry_run("--variants", "libc", "--runtime", "5", "--direct", "0")
         runs = [line for line in result.stdout.splitlines() if "bench/run.sh" in line]
-        self.assertEqual(len(runs), 9)
+        self.assertEqual(len(runs), 8)
         self.assertTrue(all(line.endswith("--runtime 5 --direct 0") for line in runs))
+        # The runtime that was asked for is the only one, and the ramp keeps its default.
+        self.assertTrue(all(line.count("--runtime") == 1 and "--ramp 5" in line for line in runs))
+
+    def test_a_run_is_long_unless_it_is_told_otherwise(self):
+        result = self.dry_run("--variants", "libc")
+        runs = [line for line in result.stdout.splitlines() if "bench/run.sh" in line]
+        self.assertTrue(all("--runtime 15 --ramp 5" in line for line in runs))
+        result = self.dry_run("--variants", "libc", "--ramp", "2")
+        runs = [line for line in result.stdout.splitlines() if "bench/run.sh" in line]
+        self.assertTrue(all("--runtime 15" in line and line.count("--ramp") == 1 for line in runs))
 
     def test_an_unknown_variant_is_refused(self):
         result = self.dry_run("--variants", "libc epoll")
