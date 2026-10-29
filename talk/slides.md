@@ -464,7 +464,7 @@ fio на том же файле показывает то же самое, ко�
 **Макет:** Final Slide
 
 **На слайде:** адрес репозитория и три команды: `bench/matrix.sh --help`,
-`bench/run.sh --help`, `bench/ceiling.sh --help`; «запустите у себя и сравните».
+`bench/run.sh --help`, `bench/ceiling.sh --help`.
 
 ### 33. Вопросы (35:15)
 
