@@ -246,6 +246,32 @@ def cpu_power():
     return found
 
 
+def mac_power():
+    """The mode of power of a Mac: low power, high power or automatic, and whether it is on the
+    mains. A Mac has no cpufreq: `pmset` says what the system is set to, as the same words that
+    the governor of Linux is told in, so that the server of results tells them apart."""
+    values = {}
+    for line in (run_text(["pmset", "-g"]) or "").splitlines():
+        parts = line.split()
+        if len(parts) >= 2:
+            values[parts[0]] = parts[1]
+    if not {"lowpowermode", "highpowermode", "powermode"} & values.keys():
+        return {}
+    if values.get("lowpowermode") == "1" or values.get("powermode") == "1":
+        mode = "low-power"
+    elif values.get("highpowermode") == "1" or values.get("powermode") == "2":
+        mode = "high-power"
+    else:
+        mode = "automatic"
+    found = {"governor": mode, "cpu_driver": "pmset"}
+    source = run_text(["pmset", "-g", "batt"]) or ""
+    if "AC Power" in source:
+        found["energy_preference"] = "ac"
+    elif "Battery Power" in source:
+        found["energy_preference"] = "battery"
+    return found
+
+
 def docker_version():
     command = shlex.split(os.environ.get("DOCKER", "docker")) + ["version", "--format", "{{.Server.Version}}"]
     return (run_text(command) or "")[:64] or None
@@ -294,6 +320,7 @@ def collect_machine(directory=None):
     machine.update(cpu_info())
     machine.update(cpu_power())
     if platform.system() == "Darwin":
+        machine.update(mac_power())
         on_a_mac(machine, docker_info())
     return {key: value for key, value in machine.items() if value not in (None, "")}
 
