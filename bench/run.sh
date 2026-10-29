@@ -10,64 +10,68 @@ set -eu
 
 usage() {
     cat << 'USAGE'
-Usage: bench/run.sh [options]
+Использование: bench/run.sh [параметры]
 
-The load:
-  --bs SIZE         block size (default: 4k)
-  --mode MODE       fio's rw: randread, randwrite, read, write, randrw
-                    (default: randread)
-  --depth N         requests in flight per fio job (default: 16)
-  --numjobs N       fio jobs, each with a connection of its own (default: 1)
-  --queues N        connections of each fio job, over which its requests are
-                    spread (default: 1)
-  --sync 0|1        1 makes a write durable before it is answered (default: 1)
-  --runtime SEC     measured time (default: 10)
-  --ramp SEC        time before the measure, thrown away (default: 3)
-  --size SIZE       the range of the file that is read and written (default: 1g)
-  --complete-max N  most completions fio takes in one call (default: fio's 1)
-  --complete-min N  completions fio waits for in one call (default: fio's 1)
-  --submit-batch N  requests fio submits in one batch (default: fio's 1)
-  --fio-arg ARG     one more argument for fio, e.g. --fio-arg --norandommap; it
-                    can be given more than once
-  --server-cpus LIST CPUs allowed to the server, e.g. 8-11 (default: all)
-  --client-cpus LIST CPUs for fio jobs, one per job, e.g. 12-19 (default: all)
+Нагрузка:
+  --bs SIZE         размер блока (по умолчанию: 4k)
+  --mode MODE       rw у fio: randread, randwrite, read, write, randrw
+                    (по умолчанию: randread)
+  --depth N         запросов в полёте на одно задание fio (по умолчанию: 16)
+  --numjobs N       заданий fio, у каждого своё соединение (по умолчанию: 1)
+  --queues N        соединений у каждого задания fio, по ним раскладываются
+                    его запросы (по умолчанию: 1)
+  --sync 0|1        1: запись надёжна к моменту ответа (по умолчанию: 1)
+  --runtime SEC     замеряемое время (по умолчанию: 10)
+  --ramp SEC        разгон перед замером, его fio отбрасывает (по умолчанию: 3)
+  --size SIZE       какую часть файла читать и писать (по умолчанию: 1g)
+  --complete-max N  сколько готовых завершений fio забирает за один вызов
+                    (по умолчанию: 1, как у fio)
+  --complete-min N  сколько завершений fio ждёт за один вызов (по умолчанию: 1,
+                    как у fio)
+  --submit-batch N  сколько запросов fio подаёт за одну пачку (по умолчанию: 1,
+                    как у fio)
+  --fio-arg ARG     ещё один аргумент для fio, например --fio-arg --norandommap;
+                    можно повторять
+  --server-cpus LIST CPU, разрешённые серверу, например 8-11 (по умолчанию: все)
+  --client-cpus LIST CPU для заданий fio, по одному на задание, например 12-19
+                    (по умолчанию: все)
 
-The variant, which the server and the client both get, unless the client is told
-to be another one:
-  --backend NAME    libc, alibc or uring (default: uring)
-  --multishot       receive with one multishot receive instead of one per chunk
+Вариант, который получают и сервер, и клиент, если клиенту не задан другой:
+  --backend NAME    libc, alibc или uring (по умолчанию: uring)
+  --multishot       принимать одним multishot recv вместо одного recv на кусок
   --client-backend NAME
-                    the backend of the client, if it is not that of the server
-                    (default: --backend)
+                    бэкенд клиента, если он не тот, что у сервера
+                    (по умолчанию: --backend)
   --client-multishot 0|1
-                    multishot receive in the client (default: --multishot if the
-                    client has the backend of the server, and 0 if not)
-  --direct 0|1      the server opens its file with O_DIRECT (default: 1)
+                    multishot recv у клиента (по умолчанию: --multishot, если у
+                    клиента бэкенд сервера, и 0, если другой)
+  --direct 0|1      сервер открывает файл с O_DIRECT (по умолчанию: 1)
   --data disk|tmpfs|device
-                    where the server's file is: on the volume of a disk, in
-                    memory (tmpfs), or on the block device WHEELIE_DEVICE, with
-                    no filesystem in the way (default: disk)
-  --threads N       server threads, each with a reactor (default: its CPUs)
+                    где лежит файл сервера: на томе диска, в памяти (tmpfs) или
+                    на блочном устройстве WHEELIE_DEVICE без файловой системы
+                    (по умолчанию: disk)
+  --threads N       потоков сервера, в каждом свой реактор (по умолчанию: по
+                    числу его CPU)
 
-The run:
-  --name NAME       name of the result files in the output directory
-  --out DIR         where the results go (default: results)
-  --no-build        do not build the images
-  --keep            leave the containers running afterwards
-  --profile         record the server and the fio with perf for a part of the
-                    measured time and keep the shares of the layers of the path
-                    of a request in NAME.profile.json (Linux, needs perf, and
-                    root or `sudo -n`; see bench/layers.py)
+Прогон:
+  --name NAME       имя файлов результата в каталоге вывода
+  --out DIR         куда класть результаты (по умолчанию: results)
+  --no-build        не собирать образы
+  --keep            оставить контейнеры работать после прогона
+  --profile         записать сервер и fio через perf на часть замеряемого
+                    времени и сохранить доли слоёв пути запроса в
+                    NAME.profile.json (Linux, нужен perf и root или `sudo -n`;
+                    см. bench/layers.py)
   --profile-window SEC
-                    how long to record (default: 15, and not more than the
-                    measured time less 2)
-  --submit URL      send the result to a server of results when the run is
-                    over (see bench/submit.py)
-  -h, --help        show this help and exit
+                    сколько писать профиль (по умолчанию: 15, и не больше
+                    замеряемого времени минус 2)
+  --submit URL      отправить результат на сервер результатов после прогона
+                    (см. bench/submit.py)
+  -h, --help        показать эту справку и выйти
 
-Environment:
-  DOCKER            the docker command (default: docker; `DOCKER="sudo docker"`
-                    if you are not in the docker group)
+Окружение:
+  DOCKER            команда docker (по умолчанию: docker; `DOCKER="sudo docker"`,
+                    если вы не в группе docker)
 USAGE
 }
 

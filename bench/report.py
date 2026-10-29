@@ -394,14 +394,29 @@ def chart(results, baseline, variants, against=None):
     return "\n".join(out) + "\n"
 
 
+class RussianFormatter(argparse.HelpFormatter):
+    def add_usage(self, usage, actions, groups, prefix=None):
+        super().add_usage(usage, actions, groups, "Использование: " if prefix is None else prefix)
+
+
+def russian(parser):
+    """The help of a parser in Russian: argparse has no Russian of its own here."""
+    parser.add_argument("-h", "--help", action="help", help="показать эту справку и выйти")
+    parser._positionals.title = "аргументы"
+    parser._optionals.title = "параметры"
+    return parser
+
+
 def main():
     parser = argparse.ArgumentParser(
-        description="A table and a chart from the results of bench/run.sh.")
-    parser.add_argument("paths", nargs="+", help="JSON files, or directories of them")
-    parser.add_argument("--baseline", default=BASELINE, help="the variant the others are compared with (default: %s)" % BASELINE)
-    parser.add_argument("--against", metavar="LIST", help="the variants for the vertical axis of the chart, comma separated (default: all but the baseline)")
-    parser.add_argument("--plot", metavar="FILE", help="write the chart, an SVG, to FILE")
-    parser.add_argument("--ratio", action="store_true", help="also print the IOPS of each variant as a multiple of the baseline")
+        description="Таблица и график из результатов bench/run.sh.",
+        formatter_class=RussianFormatter, add_help=False)
+    parser.add_argument("paths", nargs="+", help="JSON-файлы или каталоги с ними")
+    parser.add_argument("--baseline", default=BASELINE, help="вариант, с которым сравнивают остальные (по умолчанию: %s)" % BASELINE)
+    parser.add_argument("--against", metavar="LIST", help="варианты для вертикальной оси графика через запятую (по умолчанию: все, кроме базового)")
+    parser.add_argument("--plot", metavar="FILE", help="записать график, SVG, в FILE")
+    parser.add_argument("--ratio", action="store_true", help="ещё и напечатать IOPS каждого варианта как кратное базового")
+    russian(parser)
     args = parser.parse_args()
 
     results = read_results(args.paths)

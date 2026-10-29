@@ -20,20 +20,20 @@ namespace {
 void print_usage(const char *argv0) {
   std::fprintf(
       stderr,
-      "Usage: %s -b HOST:PORT -f FILE [options]\n"
+      "Использование: %s -b HOST:PORT -f FILE [параметры]\n"
       "\n"
-      "Options:\n"
-      "  -b, --bind HOST:PORT     address to listen on (required)\n"
-      "  -f, --file PATH          file or block device to serve (required)\n"
-      "  -B, --backend NAME       libc, alibc or uring (default: uring)\n"
-      "      --multishot          receive with one multishot receive per\n"
-      "                           connection (default: a receive per chunk)\n"
-      "  -t, --threads N          threads, each with a reactor of its own\n"
-      "                           (default: number of CPUs)\n"
-      "      --queue-depth N      operations a reactor may have in flight\n"
-      "                           (default: 1024)\n"
-      "      --direct 0|1         open the file with O_DIRECT (default: 1)\n"
-      "  -h, --help               show this help and exit\n",
+      "Параметры:\n"
+      "  -b, --bind HOST:PORT     адрес, на котором слушать (обязателен)\n"
+      "  -f, --file PATH          файл или устройство для отдачи (обязателен)\n"
+      "  -B, --backend NAME       libc, alibc или uring (по умолчанию: uring)\n"
+      "      --multishot          принимать multishot recv на соединение\n"
+      "                           (по умолчанию: recv на каждый кусок)\n"
+      "  -t, --threads N          потоков, в каждом свой реактор\n"
+      "                           (по умолчанию: число CPU)\n"
+      "      --queue-depth N      операций в полёте у одного реактора\n"
+      "                           (по умолчанию: 1024)\n"
+      "      --direct 0|1         открывать файл с O_DIRECT (по умолчанию: 1)\n"
+      "  -h, --help               показать эту справку и выйти\n",
       argv0);
 }
 
