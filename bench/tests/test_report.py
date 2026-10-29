@@ -255,7 +255,7 @@ class MatrixTest(unittest.TestCase):
         result = self.dry_run()
         self.assertEqual(result.returncode, 0, result.stderr)
         runs = [line for line in result.stdout.splitlines() if "bench/run.sh" in line]
-        self.assertEqual(len(runs), 4 * 8)
+        self.assertEqual(len(runs), 4 * 10)
         multishot = next(r for r in runs if "randread_qd16_nj8_uring-ms" in r)
         self.assertIn("--mode randread --bs 4k --depth 16 --numjobs 8 "
                       "--backend uring --multishot", multishot)
@@ -329,14 +329,14 @@ class MatrixTest(unittest.TestCase):
         lines = result.stdout.splitlines()
         building = next(i for i, l in enumerate(lines) if "building the images" in l)
         who = next(i for i, l in enumerate(lines) if l.startswith("== your client id") or "== you are" in l)
-        first = next(i for i, l in enumerate(lines) if "[1/32]" in l)
+        first = next(i for i, l in enumerate(lines) if "[1/40]" in l)
         self.assertLess(building, who)
         self.assertEqual(who + 1, first)
 
     def test_what_is_not_its_own_goes_to_run_sh(self):
         result = self.dry_run("--variants", "libc", "--runtime", "5", "--direct", "0")
         runs = [line for line in result.stdout.splitlines() if "bench/run.sh" in line]
-        self.assertEqual(len(runs), 8)
+        self.assertEqual(len(runs), 10)
         self.assertTrue(all(line.endswith("--runtime 5 --direct 0") for line in runs))
         # The runtime that was asked for is the only one, and the ramp keeps its default.
         self.assertTrue(all(line.count("--runtime") == 1 and "--ramp 5" in line for line in runs))
