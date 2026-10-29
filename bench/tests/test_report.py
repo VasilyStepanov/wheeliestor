@@ -276,15 +276,17 @@ class MatrixTest(unittest.TestCase):
 
     def test_the_first_point_of_the_default_chart_comes_after_two_runs(self):
         names = self.runs_of()
-        self.assertEqual(set(names[:2]), {"randread_qd16_nj1_alibc", "randread_qd16_nj1_uring"})
-        # The loads that tell the most come first, the long blocks last.
+        self.assertEqual(set(names[:2]), {"randread_qd1_nj1_alibc", "randread_qd1_nj1_uring"})
+        # The loads are in the order of the table of the docs: by block, depth, jobs and mode.
         loads = []
         for name in names:
             load = name.rsplit("_", 1)[0] if not name.endswith("uring-ms") else name[: -len("_uring-ms")]
             if load not in loads:
                 loads.append(load)
-        self.assertEqual(loads[0], "randread_qd16_nj1")
-        self.assertEqual(loads[-2:], ["seqread_1m_nj4", "seqwrite_1m_nj4"])
+        self.assertEqual(loads, ["randread_qd1_nj1", "randwrite_qd1_nj1", "seqread_4k_qd1_nj1",
+                                 "seqwrite_4k_qd1_nj1", "randread_qd16_nj1", "randwrite_qd16_nj1",
+                                 "randread_qd16_nj8", "randwrite_qd16_nj8", "seqread_1m_nj4",
+                                 "seqwrite_1m_nj4"])
 
     @staticmethod
     def variant_of(name):
