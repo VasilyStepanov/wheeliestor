@@ -267,7 +267,7 @@ class MatrixTest(unittest.TestCase):
 
     def test_the_first_point_of_the_default_chart_comes_after_two_runs(self):
         names = self.runs_of()
-        self.assertEqual(names[:2], ["randread_qd16_nj1_alibc", "randread_qd16_nj1_uring"])
+        self.assertEqual(set(names[:2]), {"randread_qd16_nj1_alibc", "randread_qd16_nj1_uring"})
         # The loads that tell the most come first, the long blocks last.
         loads = []
         for name in names:
@@ -277,15 +277,33 @@ class MatrixTest(unittest.TestCase):
         self.assertEqual(loads[0], "randread_qd16_nj1")
         self.assertEqual(loads[-2:], ["seqread_1m_nj4", "seqwrite_1m_nj4"])
 
-    def test_the_variant_that_starts_a_load_changes(self):
-        names = self.runs_of()
-        starts = [names[i].rsplit("_", 1)[1] if not names[i].endswith("uring-ms") else "uring-ms"
-                  for i in range(0, len(names), 4)]
-        self.assertEqual(starts[:4], ["alibc", "uring", "libc", "uring-ms"])
-        # The variants of one load are run next to each other.
+    @staticmethod
+    def variant_of(name):
+        return "uring-ms" if name.endswith("uring-ms") else name.rsplit("_", 1)[1]
+
+    def test_the_order_of_the_variants_is_random_for_every_load(self):
+        names = self.runs_of("--seed", "1")
+        # The variants of one load are run next to each other, each once.
         for i in range(0, len(names), 4):
             self.assertEqual(len({n.rsplit("_", 1)[0] if not n.endswith("uring-ms") else n[: -len("_uring-ms")]
                                   for n in names[i:i + 4]}), 1)
+            self.assertEqual({self.variant_of(n) for n in names[i:i + 4]},
+                             {"libc", "alibc", "uring", "uring-ms"})
+        # No variant is always the first, and the orders of the loads are not all one.
+        starts = set()
+        orders = set()
+        for seed in range(1, 21):
+            names = self.runs_of("--seed", str(seed))
+            variants = [self.variant_of(n) for n in names]
+            starts |= {variants[i] for i in range(0, len(variants), 4)}
+            orders |= {tuple(variants[i:i + 4]) for i in range(4, len(variants), 4)}
+        self.assertEqual(starts, {"libc", "alibc", "uring", "uring-ms"})
+        self.assertGreater(len(orders), 4)
+
+    def test_a_seed_repeats_the_order(self):
+        self.assertEqual(self.runs_of("--seed", "5"), self.runs_of("--seed", "5"))
+        self.assertNotEqual(self.runs_of("--seed", "5"), self.runs_of("--seed", "6"))
+        self.assertIn("--seed 5", self.dry_run("--seed", "5").stdout)
 
     def test_the_name_of_the_client_is_told_after_the_build_and_before_the_first_run(self):
         import tempfile
