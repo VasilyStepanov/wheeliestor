@@ -130,9 +130,9 @@ text = open(sys.argv[1]).read()
 job = json.loads(text[text.index("{"):])["jobs"][0]
 stats = job["read"] if job["read"]["io_bytes"] else job["write"]
 deviation = 100 * stats["iops_stddev"] / stats["iops_mean"] if stats["iops_mean"] else 0
-print("%-34s iops=%7d  bw=%7.0f MiB/s  clat=%7.0f us  p99=%7.0f us  stddev=%4.1f%%" % (
+print("%-34s iops=%7d  bw=%7.0f MiB/s  clat=%7.0f us  p95=%7.0f us  stddev=%4.1f%%" % (
     sys.argv[2], stats["iops"], stats["bw"] / 1024, stats["clat_ns"]["mean"] / 1000,
-    stats["clat_ns"]["percentile"]["99.000000"] / 1000, deviation))
+    stats["clat_ns"]["percentile"]["95.000000"] / 1000, deviation))
 PY
 }
 
