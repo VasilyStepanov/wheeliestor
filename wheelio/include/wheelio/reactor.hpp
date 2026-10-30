@@ -269,8 +269,12 @@ private:
   WioReactor *_reactor;
 
 public:
-  Reactor(WioBackend backend, unsigned int depth) : _reactor(nullptr) {
-    int ret = wio_reactor_create(backend, depth, &_reactor);
+  // `pool_threads` is the size of the pool of disk threads of the alibc
+  // backend, and nothing to the others.
+  Reactor(WioBackend backend, unsigned int depth,
+          unsigned int pool_threads = WIO_ALIBC_THREADS)
+      : _reactor(nullptr) {
+    int ret = wio_reactor_create_pool(backend, depth, pool_threads, &_reactor);
     if (ret < 0) {
       detail::throw_errno(-ret);
     }

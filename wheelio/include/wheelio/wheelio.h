@@ -62,8 +62,8 @@ typedef enum {
   /* Nonblocking sockets + poll(); disk I/O is a blocking syscall made
    * inline by the loop itself. */
   WIO_BACKEND_LIBC = 0,
-  /* Same as WIO_BACKEND_LIBC, but disk I/O runs on a pool of 4 worker
-   * threads and completes back into the loop. */
+  /* Same as WIO_BACKEND_LIBC, but disk I/O runs on a pool of worker threads
+   * (WIO_ALIBC_THREADS by default) and completes back into the loop. */
   WIO_BACKEND_ALIBC,
   /* io_uring. */
   WIO_BACKEND_URING,
@@ -82,6 +82,9 @@ const char *wio_backend_name(WioBackend backend);
  * @return 0 on success, -EINVAL if `name` is not a known backend.
  */
 int wio_backend_from_name(const char *name, WioBackend *backend);
+
+/** Size of the pool of disk worker threads of WIO_BACKEND_ALIBC, by default. */
+#define WIO_ALIBC_THREADS 16u
 
 typedef struct WioReactor WioReactor;
 typedef struct WioOp WioOp;
@@ -169,6 +172,15 @@ struct WioOp {
  */
 int wio_reactor_create(WioBackend backend, unsigned int depth,
                        WioReactor **reactor);
+
+/**
+ * Same as wio_reactor_create(), with the size of the pool of disk worker
+ * threads, which only WIO_BACKEND_ALIBC uses.
+ *
+ * @param threads Worker threads of the pool; must not be 0.
+ */
+int wio_reactor_create_pool(WioBackend backend, unsigned int depth,
+                            unsigned int threads, WioReactor **reactor);
 
 /**
  * Destroys a reactor. No operation may be in flight: cancel them, and run

@@ -10,6 +10,8 @@
 #   WHEELIE_BACKEND        libc, alibc or uring (default: uring)
 #   WHEELIE_MULTISHOT      1 for multishot receive (default: 0)
 #   WHEELIE_THREADS        threads, each with a reactor (default: the CPUs)
+#   WHEELIE_DISK_THREADS   disk threads of the pool of a reactor of alibc
+#                          (default: 16)
 #   WHEELIE_QUEUE_DEPTH    operations a reactor may have in flight
 #   WHEELIE_DIRECT         1 to open the file with O_DIRECT (default: 1)
 #   WHEELIE_FILE_SIZE_MB   size of the file (default: 2048)
@@ -29,6 +31,7 @@ args=(--bind 0.0.0.0:39900 --file "$file"
       --direct "${WHEELIE_DIRECT:-1}")
 [ "${WHEELIE_MULTISHOT:-0}" = 1 ] && args+=(--multishot)
 [ -n "${WHEELIE_THREADS:-}" ] && args+=(--threads "$WHEELIE_THREADS")
+[ -n "${WHEELIE_DISK_THREADS:-}" ] && args+=(--disk-threads "$WHEELIE_DISK_THREADS")
 [ -n "${WHEELIE_QUEUE_DEPTH:-}" ] && args+=(--queue-depth "$WHEELIE_QUEUE_DEPTH")
 
 exec wheelie-server "${args[@]}"

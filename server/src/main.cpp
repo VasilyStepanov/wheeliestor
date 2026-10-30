@@ -30,6 +30,10 @@ void print_usage(const char *argv0) {
       "                           (по умолчанию: recv на каждый кусок)\n"
       "  -t, --threads N          потоков, в каждом свой реактор\n"
       "                           (по умолчанию: число CPU)\n"
+      "      --disk-threads N     дисковых потоков в пуле каждого реактора "
+      "alibc\n"
+      "                           (по умолчанию: 16; у других бэкендов их "
+      "нет)\n"
       "      --queue-depth N      операций в полёте у одного реактора\n"
       "                           (по умолчанию: 1024)\n"
       "      --direct 0|1         открывать файл с O_DIRECT (по умолчанию: 1)\n"
@@ -72,6 +76,7 @@ int main(int argc, char **argv) {
       {"backend", required_argument, nullptr, 'B'},
       {"multishot", no_argument, nullptr, 'M'},
       {"threads", required_argument, nullptr, 't'},
+      {"disk-threads", required_argument, nullptr, 'P'},
       {"queue-depth", required_argument, nullptr, 'Q'},
       {"direct", required_argument, nullptr, 'D'},
       {"help", no_argument, nullptr, 'h'},
@@ -100,6 +105,9 @@ int main(int argc, char **argv) {
         break;
       case 't':
         config.threads = parse_number(optarg, "--threads");
+        break;
+      case 'P':
+        config.disk_threads = parse_number(optarg, "--disk-threads");
         break;
       case 'Q':
         config.queue_depth = parse_number(optarg, "--queue-depth");
@@ -133,12 +141,17 @@ int main(int argc, char **argv) {
 
     wheelie::Server server(config);
     uint16_t port = server.start();
+    std::string pool =
+        config.backend == WIO_BACKEND_ALIBC
+            ? ", " + std::to_string(config.disk_threads) + " disk threads"
+            : "";
     std::fprintf(stderr,
-                 "wheelie-server: listening on %s:%u (%s%s, %u threads, queue "
-                 "depth %u, %s)\n",
+                 "wheelie-server: listening on %s:%u (%s%s, %u threads%s, "
+                 "queue depth %u, %s)\n",
                  config.host.c_str(), port, wio_backend_name(config.backend),
                  config.multishot ? " multishot" : "", config.threads,
-                 config.queue_depth, config.direct ? "O_DIRECT" : "buffered");
+                 pool.c_str(), config.queue_depth,
+                 config.direct ? "O_DIRECT" : "buffered");
 
     int signal_number = 0;
     sigwait(&signals, &signal_number);

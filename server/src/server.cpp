@@ -122,7 +122,8 @@ struct Server::Impl {
   void worker_main(unsigned int index, std::promise<void> ready) {
     bool announced = false;
     try {
-      wheelio::Reactor reactor(config.backend, config.queue_depth);
+      wheelio::Reactor reactor(config.backend, config.queue_depth,
+                               config.disk_threads);
       bool acceptor = index == 0;
       WorkerContext context{reactor,
                             file_fd,

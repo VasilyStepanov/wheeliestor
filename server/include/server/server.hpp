@@ -24,6 +24,9 @@ struct ServerConfig {
   // Operations a reactor may have in flight: a connection keeps one receive
   // and, for each request it has not answered yet, a disk operation or a send.
   unsigned int queue_depth = 1024;
+  // Disk threads of the pool of a reactor of the alibc backend; the other
+  // backends have none.
+  unsigned int disk_threads = WIO_ALIBC_THREADS;
   // Open the file with O_DIRECT.
   bool direct = true;
 };
