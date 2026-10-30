@@ -13,7 +13,7 @@ usage() {
 Использование: bench/matrix.sh [параметры] [параметры bench/run.sh]
 
   --out DIR         куда класть результаты (по умолчанию: results/matrix-ДАТА)
-  --variants LIST   варианты, список в кавычках (по умолчанию: "alibc uring libc uring-ms")
+  --variants LIST   варианты, список в кавычках (по умолчанию: "libc alibc uring")
   --seed N          зерно порядка вариантов (по умолчанию: время; оно
                     печатается, чтобы порядок можно было повторить)
   --dry-run         только сказать, что будет запущено
@@ -46,10 +46,7 @@ usage() {
 заданий и режиму. Варианты одной нагрузки идут подряд, в случайном порядке,
 который для каждой нагрузки свой: первый прогон после тяжёлой нагрузки немного
 медленнее, и что-то может прогреваться, так что первым не должен быть всегда
-один и тот же вариант. Только в первой нагрузке первыми идут alibc и uring, в
-случайном порядке между собой: первая точка графика, который сравнивает их по
-умолчанию, появляется после двух прогонов (bench/run.sh --submit отправляет
-каждый результат сразу после замера).
+один и тот же вариант. Ни у какого варианта нет приоритета.
 
 Прогон, у которого в каталоге уже есть результат, не запускается снова, так что
 прерванная матрица продолжается с того места, где остановилась, если запустить
@@ -74,7 +71,7 @@ LOADS=(
     seqwrite_1m_nj4:write:1m:4:4
 )
 
-out="" variants="alibc uring libc uring-ms" dry_run=0 build=1 seed="" submit_url="" no_submit=0
+out="" variants="libc alibc uring" dry_run=0 build=1 seed="" submit_url="" no_submit=0
 passed=()
 # A run is long unless the caller says otherwise.
 runtime_default=(--runtime 15) ramp_default=(--ramp 5)
@@ -142,7 +139,6 @@ fi
 [ "$dry_run" = 1 ] || mkdir -p "$out"
 total=$(($(echo $variants | wc -w) * ${#LOADS[@]}))
 number=0
-load_number=0
 variant_list=($variants)
 
 # A random order of the arguments, in the array `shuffled`. The seed is told, and
@@ -159,25 +155,9 @@ shuffle() {
 }
 for load in "${LOADS[@]}"; do
     IFS=: read -r name mode bs depth numjobs <<< "$load"
-    # Every load has an order of the variants of its own. In the first one the two
-    # of the default chart come first, so that a chart has its first point early.
-    if [ "$load_number" = 0 ]; then
-        first=() others=()
-        for variant in "${variant_list[@]}"; do
-            case $variant in
-            alibc | uring) first+=("$variant") ;;
-            *) others+=("$variant") ;;
-            esac
-        done
-        shuffle ${first[@]+"${first[@]}"}
-        order=(${shuffled[@]+"${shuffled[@]}"})
-        shuffle ${others[@]+"${others[@]}"}
-        order+=(${shuffled[@]+"${shuffled[@]}"})
-    else
-        shuffle "${variant_list[@]}"
-        order=("${shuffled[@]}")
-    fi
-    load_number=$((load_number + 1))
+    # Every load has an order of the variants of its own.
+    shuffle "${variant_list[@]}"
+    order=("${shuffled[@]}")
     for variant in "${order[@]}"; do
         number=$((number + 1))
         run_name="${name}_${variant}"

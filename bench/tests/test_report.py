@@ -7,6 +7,7 @@ import unittest
 import xml.etree.ElementTree as ET
 
 BENCH = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ALL_VARIANTS = "libc alibc uring uring-ms"
 sys.path.insert(0, BENCH)
 
 import report  # noqa: E402
@@ -252,7 +253,7 @@ class MatrixTest(unittest.TestCase):
              *arguments], capture_output=True, text=True)
 
     def test_every_variant_runs_every_load(self):
-        result = self.dry_run()
+        result = self.dry_run("--variants", ALL_VARIANTS)
         self.assertEqual(result.returncode, 0, result.stderr)
         runs = [line for line in result.stdout.splitlines() if "bench/run.sh" in line]
         self.assertEqual(len(runs), 4 * 10)
@@ -274,9 +275,8 @@ class MatrixTest(unittest.TestCase):
                 names.append(line.split("--name ")[1].split(" ")[0])
         return names
 
-    def test_the_first_point_of_the_default_chart_comes_after_two_runs(self):
+    def test_the_loads_are_in_the_order_of_the_table(self):
         names = self.runs_of()
-        self.assertEqual(set(names[:2]), {"randread_qd1_nj1_alibc", "randread_qd1_nj1_uring"})
         # The loads are in the order of the table of the docs: by block, depth, jobs and mode.
         loads = []
         for name in names:
@@ -293,7 +293,7 @@ class MatrixTest(unittest.TestCase):
         return "uring-ms" if name.endswith("uring-ms") else name.rsplit("_", 1)[1]
 
     def test_the_order_of_the_variants_is_random_for_every_load(self):
-        names = self.runs_of("--seed", "1")
+        names = self.runs_of("--seed", "1", "--variants", ALL_VARIANTS)
         # The variants of one load are run next to each other, each once.
         for i in range(0, len(names), 4):
             self.assertEqual(len({n.rsplit("_", 1)[0] if not n.endswith("uring-ms") else n[: -len("_uring-ms")]
@@ -304,7 +304,7 @@ class MatrixTest(unittest.TestCase):
         starts = set()
         orders = set()
         for seed in range(1, 21):
-            names = self.runs_of("--seed", str(seed))
+            names = self.runs_of("--seed", str(seed), "--variants", ALL_VARIANTS)
             variants = [self.variant_of(n) for n in names]
             starts |= {variants[i] for i in range(0, len(variants), 4)}
             orders |= {tuple(variants[i:i + 4]) for i in range(4, len(variants), 4)}
@@ -331,7 +331,7 @@ class MatrixTest(unittest.TestCase):
         lines = result.stdout.splitlines()
         building = next(i for i, l in enumerate(lines) if "building the images" in l)
         who = next(i for i, l in enumerate(lines) if l.startswith("== your client id") or "== you are" in l)
-        first = next(i for i, l in enumerate(lines) if "[1/40]" in l)
+        first = next(i for i, l in enumerate(lines) if "[1/30]" in l)
         self.assertLess(building, who)
         self.assertEqual(who + 1, first)
 
