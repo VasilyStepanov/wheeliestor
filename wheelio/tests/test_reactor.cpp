@@ -105,6 +105,21 @@ TEST(Reactor, CreateRejectsInvalidDepth) {
   EXPECT_EQ(wio_reactor_create(WIO_BACKEND_URING, 1u << 20, &reactor), -EINVAL);
 }
 
+TEST(Reactor, CreateRejectsEmptyPool) {
+  WioReactor *reactor = nullptr;
+  EXPECT_EQ(wio_reactor_create_pool(WIO_BACKEND_ALIBC, 16, 0, &reactor),
+            -EINVAL);
+}
+
+TEST(Reactor, CreateTakesPoolSize) {
+  for (unsigned int threads : {1u, 8u}) {
+    WioReactor *reactor = nullptr;
+    ASSERT_EQ(wio_reactor_create_pool(WIO_BACKEND_ALIBC, 16, threads, &reactor),
+              0);
+    wio_reactor_delete(reactor);
+  }
+}
+
 TEST_P(ReactorTest, SendAndRecv) {
   Fd a, b;
   ASSERT_TRUE(socket_pair(a, b));

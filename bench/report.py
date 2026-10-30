@@ -80,6 +80,7 @@ class Result:
             ("client-cpus", options.get("cpus_allowed", ""), ""),
             ("server-cpus", settings.get("WHEELIE_SERVER_CPUS", ""), ""),
             ("threads", settings.get("WHEELIE_THREADS", ""), ""),
+            ("disk-threads", settings.get("WHEELIE_DISK_THREADS", ""), ""),
             ("direct", settings.get("WHEELIE_DIRECT", "1"), "1"),
         ]
         if options.get("cpus_allowed"):

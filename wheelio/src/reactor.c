@@ -5,7 +5,12 @@
 
 int wio_reactor_create(WioBackend backend, unsigned int depth,
                        WioReactor **reactor) {
-  if (depth == 0) {
+  return wio_reactor_create_pool(backend, depth, WIO_ALIBC_THREADS, reactor);
+}
+
+int wio_reactor_create_pool(WioBackend backend, unsigned int depth,
+                            unsigned int threads, WioReactor **reactor) {
+  if (depth == 0 || threads == 0) {
     return -EINVAL;
   }
   switch (backend) {
@@ -14,7 +19,7 @@ int wio_reactor_create(WioBackend backend, unsigned int depth,
   case WIO_BACKEND_LIBC:
     return wio_libc_reactor_create(depth, 0, reactor);
   case WIO_BACKEND_ALIBC:
-    return wio_libc_reactor_create(depth, WIO_ALIBC_THREADS, reactor);
+    return wio_libc_reactor_create(depth, threads, reactor);
   }
   return -EINVAL;
 }

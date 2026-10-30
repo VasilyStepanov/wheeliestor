@@ -50,6 +50,8 @@ usage() {
                     где лежит файл сервера: на томе диска, в памяти (tmpfs) или
                     на блочном устройстве WHEELIE_DEVICE без файловой системы
                     (по умолчанию: disk)
+  --disk-threads N  дисковых потоков в пуле каждого реактора alibc (по умолчанию:
+                    16; у других бэкендов пула нет)
   --threads N       потоков сервера, в каждом свой реактор (по умолчанию: по
                     числу его CPU)
 
@@ -78,7 +80,7 @@ USAGE
 }
 
 bs=4k mode=randread depth=16 numjobs=1 queues=1 sync=1 runtime=10 ramp=3 size=1g
-backend=uring multishot=0 client_backend="" client_multishot="" direct=1 data=disk threads=""
+backend=uring multishot=0 client_backend="" client_multishot="" direct=1 data=disk threads="" disk_threads=""
 complete_max="" complete_min="" submit_batch="" server_cpus="" client_cpus=""
 name="" out=results build=1 keep=0
 profile=0 profile_window="" submit_url="" no_submit=0
@@ -112,6 +114,7 @@ while [ $# -gt 0 ]; do
     --direct) direct=$2; shift 2 ;;
     --data) data=$2; shift 2 ;;
     --threads) threads=$2; shift 2 ;;
+    --disk-threads) disk_threads=$2; shift 2 ;;
     --name) name=$2; shift 2 ;;
     --out) out=$2; shift 2 ;;
     --no-build) build=0; shift ;;
@@ -282,6 +285,7 @@ WHEELIE_DIRECT=$direct
 WHEELIE_DATA=$data
 WHEELIE_DEVICE=${WHEELIE_DEVICE:-}
 WHEELIE_THREADS=$threads
+WHEELIE_DISK_THREADS=$disk_threads
 WHEELIE_QUEUE_DEPTH=$queue_depth
 WHEELIE_FILE_SIZE_MB=$file_mb
 WHEELIE_RESULTS=$out_abs

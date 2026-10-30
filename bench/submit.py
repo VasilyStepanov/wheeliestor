@@ -391,6 +391,15 @@ def build_submission(json_path, machine):
     elif settings.get("WHEELIE_THREADS", "").isdigit():
         threads = int(settings["WHEELIE_THREADS"])
 
+    # The pool of disk threads of an alibc server, if the server says: a server of results
+    # takes the rest as it was before the pool could be set.
+    disk_threads = None
+    found = re.search(r"(\d+) disk threads", banner or "")
+    if found:
+        disk_threads = int(found.group(1))
+    elif settings.get("WHEELIE_DISK_THREADS", "").isdigit():
+        disk_threads = int(settings["WHEELIE_DISK_THREADS"])
+
     # The variant of a result is that of the server; the client is told only if it
     # is another one, so that a server of results that does not know it takes the rest.
     client_backend = options["wheelie_backend"]
@@ -426,6 +435,8 @@ def build_submission(json_path, machine):
             run[key] = settings[name]
     if threads:
         run["threads"] = threads
+    if disk_threads and server_backend == "alibc":
+        run["disk_threads"] = disk_threads
 
     stats = job["read"] if job["read"].get("io_bytes") else job["write"]
     ended = fio.get("timestamp") or time.time()

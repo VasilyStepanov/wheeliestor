@@ -5,9 +5,6 @@
 
 #define WIO_RECV_MAX_ENTRIES 32768u
 
-/* Size of the disk worker pool of the alibc backend. */
-#define WIO_ALIBC_THREADS 4u
-
 /*
  * What a backend does for each operation. The generic layer has already
  * checked the arguments, claimed a place in the reactor for `op` and stored
