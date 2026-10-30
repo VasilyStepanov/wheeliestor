@@ -367,6 +367,43 @@ def iso(seconds):
     return datetime.datetime.fromtimestamp(seconds, datetime.timezone.utc).isoformat()
 
 
+CLOCK_TICKS = 100  # USER_HZ of Linux, the unit of utime and stime in /proc
+
+
+def server_load(text, runtime, iops):
+    """What the server spent in the measured window, out of the lines of bench/run.sh.
+
+    A line is the time in ms, the ticks of the server in user and in kernel code, and its
+    voluntary and involuntary context switches. The window is the last `runtime` seconds
+    of the lines, the run ending with the last of them. Nothing is told if the window is not
+    there, or if the lines are not as expected.
+    """
+    rows = []
+    for line in (text or "").splitlines():
+        parts = line.split()
+        if len(parts) == 5 and all(part.isdigit() for part in parts):
+            rows.append([int(part) for part in parts])
+    if len(rows) < 2 or not iops:
+        return {}
+    last = rows[-1]
+    first = next((row for row in reversed(rows) if row[0] <= last[0] - runtime * 1000), None)
+    if first is None:
+        return {}
+    seconds = (last[0] - first[0]) / 1000.0
+    if seconds < 0.8 * runtime:
+        return {}
+    usr = (last[1] - first[1]) / CLOCK_TICKS / seconds * 100
+    sys_ = (last[2] - first[2]) / CLOCK_TICKS / seconds * 100
+    switches = (last[3] + last[4]) - (first[3] + first[4])
+    if usr < 0 or sys_ < 0 or switches < 0:
+        return {}
+    return {
+        "server_cpu_usr_pct": round(usr, 3),
+        "server_cpu_sys_pct": round(sys_, 3),
+        "server_ctx_per_io": round(switches / (iops * seconds), 6),
+    }
+
+
 def build_submission(json_path, machine):
     """A submission from `<name>.json` and the files next to it. Raises ValueError."""
     base = json_path[: -len(".json")]
@@ -439,6 +476,7 @@ def build_submission(json_path, machine):
         run["disk_threads"] = disk_threads
 
     stats = job["read"] if job["read"].get("io_bytes") else job["write"]
+    run.update(server_load(read_text(base + ".server-stat"), int(options["runtime"]), stats.get("iops")))
     ended = fio.get("timestamp") or time.time()
     started = ended - (stats.get("runtime", 0) / 1000.0)
 

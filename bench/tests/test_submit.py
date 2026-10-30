@@ -114,6 +114,18 @@ class BuildTest(unittest.TestCase):
             body = submit.build_submission(write_result(d, server_variant="WHEELIE_BACKEND=uring\n"), MACHINE)
         self.assertNotIn("disk_threads", body["run"])
 
+    def test_the_load_of_the_server_comes_from_its_lines_of_the_window(self):
+        # 5 s of ramp and 3 s measured; the server spends 50% of a CPU in user code, 25% in
+        # kernel code, and switches 2000 times a second: with 4000 IOPS half a switch per op.
+        lines = []
+        for second in range(0, 11):
+            lines.append("%d %d %d %d %d" % (1000 * (1000 + second), 50 * second, 25 * second, 1500 * second, 500 * second))
+        load = submit.server_load("\n".join(lines), 3, 4000)
+        self.assertEqual(load, {"server_cpu_usr_pct": 50.0, "server_cpu_sys_pct": 25.0, "server_ctx_per_io": 0.5})
+        self.assertEqual(submit.server_load("\n".join(lines[:2]), 3, 4000), {})  # a window not there
+        self.assertEqual(submit.server_load(None, 3, 4000), {})
+        self.assertEqual(submit.server_load("garbage\n1 2", 3, 4000), {})
+
     def test_the_run_comes_from_fio_and_the_files_next_to_it(self):
         with tempfile.TemporaryDirectory() as d:
             body = submit.build_submission(write_result(d, multishot=True), MACHINE)

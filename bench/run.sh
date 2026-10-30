@@ -407,6 +407,23 @@ record_profile() {
     wait "$server_perf" "$!" 2> /dev/null || true
 }
 
+# What the server spends, from /proc of the container, where the server is the process 1:
+# a line a second of the time (in ticks) of all its threads in user and in kernel code, and
+# of their context switches, voluntary and not. It needs nothing of the host, so it is there
+# on any Docker. bench/submit.py takes the seconds of the measured window out of the lines.
+sample_server() {
+    compose exec -T server sh -c '
+        i=0
+        while [ "$i" -lt "$1" ]; do
+            echo "$(date +%s%3N) $(sed "s/^.*) //" /proc/1/stat | cut -d" " -f12,13)" \
+                "$(cat /proc/1/task/*/status | awk "/^voluntary_ctxt_switches/ {v += \$2} /^nonvoluntary_ctxt_switches/ {n += \$2} END {print v, n}")"
+            i=$((i + 1))
+            sleep 1
+        done' sh $((ramp + runtime + 30)) > "$out_abs/$name.server-stat" 2> /dev/null &
+    sampler_pid=$!
+}
+
+sample_server
 if [ "$profile" = 1 ]; then
     run_fio &
     fio_run_pid=$!
@@ -415,6 +432,8 @@ if [ "$profile" = 1 ]; then
 else
     run_fio
 fi
+kill "$sampler_pid" 2> /dev/null || true
+wait "$sampler_pid" 2> /dev/null || true
 
 # fio wrote its progress, its normal output and its JSON into one file: the
 # JSON is told apart by its braces, and the rest is the text of the result. The
