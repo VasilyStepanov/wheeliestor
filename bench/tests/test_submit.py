@@ -62,6 +62,30 @@ def write_result(directory, name="case", settings=True, banner=True, profile=Non
     return path
 
 
+class DefaultServerTest(unittest.TestCase):
+    def url_of(self, argv, env):
+        told = []
+        real_say, real_env = submit.say_who, dict(os.environ)
+        submit.say_who = lambda url, client_id: told.append(url) or 0
+        os.environ.pop("WHEELIE_RESULTS_URL", None)
+        os.environ.update(env)
+        try:
+            submit.main(argv)
+        finally:
+            submit.say_who = real_say
+            os.environ.clear()
+            os.environ.update(real_env)
+        return told[0]
+
+    def test_a_result_goes_to_the_default_server(self):
+        self.assertEqual(submit.DEFAULT_URL, "http://wheelie.rawstor.io")
+        self.assertEqual(self.url_of(["--whoami"], {}), submit.DEFAULT_URL)
+
+    def test_the_environment_and_the_option_say_otherwise(self):
+        self.assertEqual(self.url_of(["--whoami"], {"WHEELIE_RESULTS_URL": "http://from.env"}), "http://from.env")
+        self.assertEqual(self.url_of(["--whoami", "--url", "http://given"], {"WHEELIE_RESULTS_URL": "http://from.env"}), "http://given")
+
+
 class BuildTest(unittest.TestCase):
     def test_the_variant_is_that_of_the_server_and_the_client_is_told_if_it_differs(self):
         server = "WHEELIE_BACKEND=uring\nWHEELIE_MULTISHOT=1\n"

@@ -351,6 +351,20 @@ class MatrixTest(unittest.TestCase):
         runs = [line for line in result.stdout.splitlines() if "bench/run.sh" in line]
         self.assertTrue(all("--runtime 15" in line and line.count("--ramp") == 1 for line in runs))
 
+    def test_the_results_go_to_the_default_server_unless_told_otherwise(self):
+        def run_lines(*arguments):
+            result = self.dry_run("--variants", "libc", *arguments)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            return [line for line in result.stdout.splitlines() if "bench/run.sh" in line]
+
+        # Nothing is said: run.sh sends to its default, so the command has no option of it.
+        self.assertTrue(all("submit" not in line.replace("--no-build", "") for line in run_lines()))
+        self.assertTrue(all(line.endswith("--no-submit") for line in run_lines("--no-submit")))
+        self.assertTrue(all(line.endswith("--submit http://results.example") for line in run_lines("--submit", "http://results.example")))
+        both = self.dry_run("--submit", "http://results.example", "--no-submit")
+        self.assertEqual(both.returncode, 2)
+        self.assertIn("together", both.stderr)
+
     def test_an_unknown_variant_is_refused(self):
         result = self.dry_run("--variants", "libc epoll")
         self.assertEqual(result.returncode, 2)

@@ -18,6 +18,10 @@ usage() {
                     печатается, чтобы порядок можно было повторить)
   --dry-run         только сказать, что будет запущено
   --no-build        не собирать образы
+  --submit URL      отправлять результаты на этот сервер результатов, а не на
+                    сервер по умолчанию (http://wheelie.rawstor.io)
+  --no-submit       не отправлять результаты никуда; по умолчанию каждый
+                    результат отправляется на сервер сразу после замера
   -h, --help        показать эту справку и выйти
 
 Вариант: libc, alibc, uring или uring-ms (uring с multishot recv).
@@ -70,7 +74,7 @@ LOADS=(
     seqwrite_1m_nj4:write:1m:4:4
 )
 
-out="" variants="alibc uring libc uring-ms" dry_run=0 build=1 seed=""
+out="" variants="alibc uring libc uring-ms" dry_run=0 build=1 seed="" submit_url="" no_submit=0
 passed=()
 # A run is long unless the caller says otherwise.
 runtime_default=(--runtime 15) ramp_default=(--ramp 5)
@@ -81,6 +85,8 @@ while [ $# -gt 0 ]; do
     --variants) variants=$2; shift 2 ;;
     --seed) seed=$2; shift 2 ;;
     --dry-run) dry_run=1; shift ;;
+    --submit) submit_url=$2; shift 2 ;;
+    --no-submit) no_submit=1; shift ;;
     --no-build) build=0; shift ;;
     -h | --help) usage; exit 0 ;;
     --runtime) runtime_default=(); passed+=("$1"); shift ;;
@@ -118,14 +124,19 @@ echo "== order of the variants: --seed $seed"
 # The output of every run goes to a log, so who is sending is said here, once,
 # after the output of the build and right before the first run: it is the last
 # thing on the screen before the runs, and the page can be searched for the name.
-if [ "$dry_run" = 0 ]; then
-    previous=""
-    for argument in ${passed[@]+"${passed[@]}"}; do
-        if [ "$previous" = --submit ]; then
-            python3 -I "$(dirname "$0")/submit.py" --whoami --url "$argument" || true
-        fi
-        previous=$argument
-    done
+if [ "$no_submit" = 1 ] && [ -n "$submit_url" ]; then
+    echo "bench/matrix.sh: --submit and --no-submit together make no sense" >&2
+    exit 2
+fi
+submit_options=() url_options=()
+[ -z "$submit_url" ] || url_options=(--url "$submit_url")
+if [ "$no_submit" = 1 ]; then
+    submit_options=(--no-submit)
+elif [ -n "$submit_url" ]; then
+    submit_options=(--submit "$submit_url")
+fi
+if [ "$dry_run" = 0 ] && [ "$no_submit" = 0 ]; then
+    python3 -I "$(dirname "$0")/submit.py" --whoami ${url_options[@]+"${url_options[@]}"} || true
 fi
 
 [ "$dry_run" = 1 ] || mkdir -p "$out"
@@ -177,7 +188,7 @@ for load in "${LOADS[@]}"; do
         command=(bench/run.sh --no-build --name "$run_name" --out "$out"
             --mode "$mode" --bs "$bs" --depth "$depth" --numjobs "$numjobs"
             $(variant_options "$variant") ${runtime_default[@]+"${runtime_default[@]}"} ${ramp_default[@]+"${ramp_default[@]}"}
-            ${passed[@]+"${passed[@]}"})
+            ${submit_options[@]+"${submit_options[@]}"} ${passed[@]+"${passed[@]}"})
         echo "== [$number/$total] ${command[*]}"
         if [ "$dry_run" = 0 ]; then
             "${command[@]}" > "$out/run.log" 2>&1 || {

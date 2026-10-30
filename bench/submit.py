@@ -3,6 +3,9 @@
 
     bench/submit.py --url http://results.example:8080 --code THE-CODE results/matrix
 
+Without --url a result goes to DEFAULT_URL (below), and bench/run.sh and
+bench/matrix.sh send what they measure there unless they are told --no-submit.
+
 What is sent for a result, from the files that bench/run.sh keeps next to it:
 
   * the JSON of fio, whole, and its plain output (`<name>.txt`), which is what a
@@ -42,7 +45,7 @@ is told to.
 With --dry-run nothing is sent: the script says what it would send.
 
 Environment:
-  WHEELIE_RESULTS_URL    the address of the server (instead of --url)
+  WHEELIE_RESULTS_URL    the address of the server (instead of --url; default: DEFAULT_URL)
   WHEELIE_RESULTS_CODE   another code than PUBLIC_CODE (instead of --code)
   WHEELIE_RESULTS_TOKEN  a token, if you have one (instead of --code)
   DOCKER                 the docker command, as for bench/run.sh
@@ -72,6 +75,9 @@ MAX_TEXT = 100_000
 # The code that the server of results is asked for a token with. It is public
 # and gives nothing but the right to submit; the server can stop accepting it,
 # and then this version of the script is refused.
+# The server of results that a result goes to when no other is said.
+DEFAULT_URL = "http://wheelie.rawstor.io"
+
 PUBLIC_CODE = "wr1-537aa06f3d3cb5d1cb99"
 LAYER_NAMES = ("network", "copies", "storage", "io_uring", "scheduler", "code", "other")
 
@@ -562,7 +568,7 @@ def main(argv=None):
                                      epilog="Что отправляется, описано в начале этого файла.",
                                      formatter_class=RussianFormatter, add_help=False)
     parser.add_argument("paths", nargs="*", help="каталоги результатов или .json-файлы fio")
-    parser.add_argument("--url", default=os.environ.get("WHEELIE_RESULTS_URL"), help="адрес сервера")
+    parser.add_argument("--url", default=os.environ.get("WHEELIE_RESULTS_URL") or DEFAULT_URL, help="адрес сервера (по умолчанию: %s)" % DEFAULT_URL)
     parser.add_argument("--code", default=os.environ.get("WHEELIE_RESULTS_CODE") or PUBLIC_CODE,
                         help="код для токена (по умолчанию: публичный код этого скрипта)")
     parser.add_argument("--token", default=os.environ.get("WHEELIE_RESULTS_TOKEN"), help="токен вместо кода")
