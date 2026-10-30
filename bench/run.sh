@@ -65,8 +65,10 @@ usage() {
   --profile-window SEC
                     сколько писать профиль (по умолчанию: 15, и не больше
                     замеряемого времени минус 2)
-  --submit URL      отправить результат на сервер результатов после прогона
-                    (см. bench/submit.py)
+  --submit URL      отправить результат на этот сервер результатов, а не на
+                    сервер по умолчанию (http://wheelie.rawstor.io)
+  --no-submit       не отправлять результат никуда; по умолчанию он отправляется
+                    на сервер результатов после прогона (см. bench/submit.py)
   -h, --help        показать эту справку и выйти
 
 Окружение:
@@ -79,7 +81,7 @@ bs=4k mode=randread depth=16 numjobs=1 queues=1 sync=1 runtime=10 ramp=3 size=1g
 backend=uring multishot=0 client_backend="" client_multishot="" direct=1 data=disk threads=""
 complete_max="" complete_min="" submit_batch="" server_cpus="" client_cpus=""
 name="" out=results build=1 keep=0
-profile=0 profile_window="" submit_url=""
+profile=0 profile_window="" submit_url="" no_submit=0
 extra_fio=()
 
 while [ $# -gt 0 ]; do
@@ -100,6 +102,7 @@ while [ $# -gt 0 ]; do
     --profile) profile=1; shift ;;
     --profile-window) profile_window=$2; shift 2 ;;
     --submit) submit_url=$2; shift 2 ;;
+    --no-submit) no_submit=1; shift ;;
     --server-cpus) server_cpus=$2; shift 2 ;;
     --client-cpus) client_cpus=$2; shift 2 ;;
     --backend) backend=$2; shift 2 ;;
@@ -117,6 +120,14 @@ while [ $# -gt 0 ]; do
     *) echo "bench/run.sh: unknown option '$1'" >&2; usage >&2; exit 2 ;;
     esac
 done
+
+if [ "$no_submit" = 1 ] && [ -n "$submit_url" ]; then
+    echo "bench/run.sh: --submit and --no-submit together make no sense" >&2
+    exit 2
+fi
+# Where a result goes: the server that is told, or, if none, the one that bench/submit.py has.
+submit_args=()
+[ -z "$submit_url" ] || submit_args=(--url "$submit_url")
 
 case $backend in
 libc | alibc | uring) ;;
@@ -299,8 +310,8 @@ cp "$env_file" "$out_abs/$name.settings"
 
 # Who is sending, said before the run: the page of results can be opened and
 # searched for the name while the run goes.
-if [ -n "$submit_url" ]; then
-    python3 -I "$(dirname "$0")/submit.py" --whoami --url "$submit_url" || true
+if [ "$no_submit" = 0 ]; then
+    python3 -I "$(dirname "$0")/submit.py" --whoami ${submit_args[@]+"${submit_args[@]}"} || true
 fi
 
 if [ "$build" = 1 ]; then
@@ -453,8 +464,8 @@ fi
 
 echo "results: $out/$name.txt, $out/$name.json, $out/$name.server"
 
-if [ -n "$submit_url" ]; then
+if [ "$no_submit" = 0 ]; then
     # A result that is not sent is not a failed run: it stays in the directory.
-    python3 -I "$here/submit.py" --no-whoami --url "$submit_url" "$out_abs/$name.json" \
+    python3 -I "$here/submit.py" --no-whoami ${submit_args[@]+"${submit_args[@]}"} "$out_abs/$name.json" \
         || echo "bench/run.sh: the result was not submitted; bench/submit.py can send it later" >&2
 fi
