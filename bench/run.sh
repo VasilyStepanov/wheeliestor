@@ -300,7 +300,9 @@ elif [ "$data" = device ]; then
     compose_files+=(-f docker-compose.device.yml)
 fi
 
-compose() { $DOCKER compose --env-file "$env_file" "${compose_files[@]}" "$@"; }
+# Nothing is read from the terminal: with `sudo docker` the plugin of compose is a
+# background process of a terminal of its own and is stopped when it reads from it.
+compose() { $DOCKER compose --env-file "$env_file" "${compose_files[@]}" "$@" < /dev/null; }
 
 cleanup() {
     if [ "$keep" = 0 ]; then
