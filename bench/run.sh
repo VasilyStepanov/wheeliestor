@@ -427,9 +427,9 @@ for direction in ("read", "write"):
         continue
     clat = stats["clat_ns"]
     iops_stddev = 100 * stats["iops_stddev"] / stats["iops_mean"] if stats["iops_mean"] else 0
-    print("%-5s iops=%d (stddev %.1f%%)  bw=%.1f MiB/s  clat mean=%.1f us  p99=%.1f us" % (
+    print("%-5s iops=%d (stddev %.1f%%)  bw=%.1f MiB/s  clat mean=%.1f us  p95=%.1f us" % (
         direction, stats["iops"], iops_stddev, stats["bw"] / 1024,
-        clat["mean"] / 1000, clat["percentile"]["99.000000"] / 1000))
+        clat["mean"] / 1000, clat["percentile"]["95.000000"] / 1000))
 PY
 fi
 here=$(cd "$(dirname "$0")" && pwd)
