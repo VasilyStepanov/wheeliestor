@@ -102,6 +102,18 @@ class BuildTest(unittest.TestCase):
         self.assertNotIn("client_backend", body["run"])
         self.assertNotIn("client_multishot", body["run"])
 
+    def test_the_pool_of_disk_threads_goes_with_an_alibc_run_only(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = write_result(d, server_variant="WHEELIE_BACKEND=alibc\nWHEELIE_DISK_THREADS=8\n")
+            body = submit.build_submission(path, MACHINE)
+            self.assertEqual(body["run"]["disk_threads"], 8)  # from the setting, there being no line
+            with open(os.path.join(d, "case.server"), "w") as handle:
+                handle.write("listening on 0.0.0.0:39900 (alibc, 8 threads, 16 disk threads, queue depth 1024)\n")
+            self.assertEqual(submit.build_submission(path, MACHINE)["run"]["disk_threads"], 16)
+        with tempfile.TemporaryDirectory() as d:
+            body = submit.build_submission(write_result(d, server_variant="WHEELIE_BACKEND=uring\n"), MACHINE)
+        self.assertNotIn("disk_threads", body["run"])
+
     def test_the_run_comes_from_fio_and_the_files_next_to_it(self):
         with tempfile.TemporaryDirectory() as d:
             body = submit.build_submission(write_result(d, multishot=True), MACHINE)
