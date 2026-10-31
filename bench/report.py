@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Turns the JSON that bench/run.sh keeps into a table and a chart.
+"""Turns the JSON that bench/measure.sh keeps into a table and a chart.
 
     bench/report.py results/matrix --plot results/matrix/libc-vs-others.svg
     bench/report.py results/matrix --baseline alibc --against uring --plot alibc-vs-uring.svg
@@ -410,7 +410,7 @@ def russian(parser):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Таблица и график из результатов bench/run.sh.",
+        description="Таблица и график из результатов bench/measure.sh.",
         formatter_class=RussianFormatter, add_help=False)
     parser.add_argument("paths", nargs="+", help="JSON-файлы или каталоги с ними")
     parser.add_argument("--baseline", default=BASELINE, help="вариант, с которым сравнивают остальные (по умолчанию: %s)" % BASELINE)

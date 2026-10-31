@@ -1,5 +1,6 @@
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -255,7 +256,7 @@ class MatrixTest(unittest.TestCase):
     def test_every_variant_runs_every_load(self):
         result = self.dry_run("--variants", ALL_VARIANTS)
         self.assertEqual(result.returncode, 0, result.stderr)
-        runs = [line for line in result.stdout.splitlines() if "bench/run.sh" in line]
+        runs = [line for line in result.stdout.splitlines() if "bench/measure.sh" in line]
         self.assertEqual(len(runs), 4 * 10)
         multishot = next(r for r in runs if "randread_qd16_nj8_uring-ms" in r)
         self.assertIn("--mode randread --bs 4k --depth 16 --numjobs 8 "
@@ -271,7 +272,7 @@ class MatrixTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         names = []
         for line in result.stdout.splitlines():
-            if "bench/run.sh" in line:
+            if "bench/measure.sh" in line:
                 names.append(line.split("--name ")[1].split(" ")[0])
         return names
 
@@ -337,7 +338,7 @@ class MatrixTest(unittest.TestCase):
 
     def test_what_is_not_its_own_goes_to_run_sh(self):
         result = self.dry_run("--variants", "libc", "--runtime", "5", "--direct", "0")
-        runs = [line for line in result.stdout.splitlines() if "bench/run.sh" in line]
+        runs = [line for line in result.stdout.splitlines() if "bench/measure.sh" in line]
         self.assertEqual(len(runs), 10)
         self.assertTrue(all(line.endswith("--runtime 5 --direct 0") for line in runs))
         # The runtime that was asked for is the only one, and the ramp keeps its default.
@@ -345,19 +346,19 @@ class MatrixTest(unittest.TestCase):
 
     def test_a_run_is_long_unless_it_is_told_otherwise(self):
         result = self.dry_run("--variants", "libc")
-        runs = [line for line in result.stdout.splitlines() if "bench/run.sh" in line]
+        runs = [line for line in result.stdout.splitlines() if "bench/measure.sh" in line]
         self.assertTrue(all("--runtime 15 --ramp 5" in line for line in runs))
         result = self.dry_run("--variants", "libc", "--ramp", "2")
-        runs = [line for line in result.stdout.splitlines() if "bench/run.sh" in line]
+        runs = [line for line in result.stdout.splitlines() if "bench/measure.sh" in line]
         self.assertTrue(all("--runtime 15" in line and line.count("--ramp") == 1 for line in runs))
 
     def test_the_results_go_to_the_default_server_unless_told_otherwise(self):
         def run_lines(*arguments):
             result = self.dry_run("--variants", "libc", *arguments)
             self.assertEqual(result.returncode, 0, result.stderr)
-            return [line for line in result.stdout.splitlines() if "bench/run.sh" in line]
+            return [line for line in result.stdout.splitlines() if "bench/measure.sh" in line]
 
-        # Nothing is said: run.sh sends to its default, so the command has no option of it.
+        # Nothing is said: measure.sh sends to its default, so the command has no option of it.
         self.assertTrue(all("submit" not in line.replace("--no-build", "") for line in run_lines()))
         self.assertTrue(all(line.endswith("--no-submit") for line in run_lines("--no-submit")))
         self.assertTrue(all(line.endswith("--submit http://results.example") for line in run_lines("--submit", "http://results.example")))
@@ -373,3 +374,56 @@ class MatrixTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DockerCommandTest(unittest.TestCase):
+    """bench/docker.sh: docker as it is, or with sudo if the user has no right to it."""
+
+    def choose(self, docker=None, sudo=None, **env):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as d:
+            for name, body in (("docker", docker), ("sudo", sudo)):
+                if body is not None:
+                    path = os.path.join(d, name)
+                    with open(path, "w") as handle:
+                        handle.write("#!/bin/bash\n" + body)
+                    os.chmod(path, 0o755)
+            # Only the commands of the test are on the PATH, besides the few that the script uses.
+            for tool in ("bash", "grep", "true", "env"):
+                os.symlink(shutil.which(tool), os.path.join(d, tool))
+            environment = {"PATH": d}
+            environment.update(env)
+            return subprocess.run(
+                ["bash", "-c", f'. {BENCH}/docker.sh; choose_docker; echo "[$DOCKER]"'],
+                capture_output=True, text=True, env=environment)
+
+    # A docker that answers, and one that refuses a user who is not in its group.
+    OPEN = "exit 0\n"
+    DENIED = ('if [ "$FAKE_SUDO" = 1 ]; then exit 0; fi\n'
+              'echo "permission denied while trying to connect to the docker API at unix:///var/run/docker.sock" >&2\n'
+              "exit 1\n")
+    SUDO = 'case "$1" in -n|-v) shift;; esac\n[ "$1" = true ] && exit 0\n[ -z "$1" ] && exit 0\nexec env FAKE_SUDO=1 "$@"\n'
+
+    def test_docker_is_used_as_it_is_when_it_answers(self):
+        result = self.choose(docker=self.OPEN)
+        self.assertEqual((result.returncode, result.stdout.strip()), (0, "[docker]"), result.stderr)
+
+    def test_sudo_is_used_when_there_is_no_permission(self):
+        result = self.choose(docker=self.DENIED, sudo=self.SUDO)
+        self.assertEqual((result.returncode, result.stdout.strip()), (0, "[sudo docker]"), result.stderr)
+
+    def test_a_command_that_is_given_is_kept(self):
+        result = self.choose(DOCKER="podman")
+        self.assertEqual((result.returncode, result.stdout.strip()), (0, "[podman]"), result.stderr)
+
+    def test_no_docker_and_a_daemon_that_does_not_answer_are_told(self):
+        missing = self.choose()
+        self.assertEqual(missing.returncode, 2)
+        self.assertIn("docker is not installed", missing.stderr)
+        down = self.choose(docker='echo "Cannot connect to the Docker daemon" >&2\nexit 1\n')
+        self.assertEqual(down.returncode, 2)
+        self.assertIn("does not answer", down.stderr)
+        no_sudo = self.choose(docker=self.DENIED)
+        self.assertEqual(no_sudo.returncode, 2)
+        self.assertIn("group docker", no_sudo.stderr)

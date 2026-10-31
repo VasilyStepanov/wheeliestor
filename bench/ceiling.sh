@@ -2,13 +2,11 @@
 #
 # Measures what the disk of the stand can do without wheelie: fio on the volume
 # that holds the file of the server, from the image of the client. The numbers
-# are the ceiling that the results of bench/run.sh are compared with.
+# are the ceiling that the results of bench/measure.sh are compared with.
 #
 # See `bench/ceiling.sh --help`, and docs/methodology.md.
 
 set -eu
-
-DOCKER=${DOCKER:-docker}
 
 usage() {
     cat << 'USAGE'
@@ -21,12 +19,12 @@ usage() {
   --volume NAME     docker-том стенда (по умолчанию: тот, что `docker volume ls`
                     показывает с именем на _data)
   --sync 0|1        1: запись надёжна к моменту завершения, как у
-                    bench/run.sh --sync 1: fio с sync=dsync, это то, что
+                    bench/measure.sh --sync 1: fio с sync=dsync, это то, что
                     сервер просит у ядра (по умолчанию: 1)
   --stand-file      мерить файл сервера (disk.img) вместо нового: скорость
                     записи виртуального диска может различаться между файлами и
                     между часами, и это число надо сравнивать с результатами
-                    bench/run.sh
+                    bench/measure.sh
   --device DEV      ещё и читать этот блочный диск, только чтение (например,
                     /dev/sda)
   --image NAME      образ с fio (по умолчанию: wheeliestor-client)
@@ -42,9 +40,10 @@ usage() {
   device     (с --device) randread 4k и read 1m, без файловой системы
 
 Окружение:
-  DOCKER            команда docker (по умолчанию: docker; `DOCKER="sudo docker"`)
+  DOCKER            команда docker (по умолчанию её определяет скрипт: docker, а если
+                    нет прав, то sudo docker; пароль спрашивается один раз)
 
-Образы должны быть уже собраны (их собирает bench/run.sh).
+Образы должны быть уже собраны (их собирает bench/measure.sh).
 USAGE
 }
 
@@ -67,17 +66,20 @@ while [ $# -gt 0 ]; do
     esac
 done
 
+. "$(dirname "$0")/docker.sh"
+choose_docker
+
 if [ -z "$volume" ]; then
     volumes=$($DOCKER volume ls --format '{{.Name}}' | grep '_data$' || true)
     case $(printf '%s\n' "$volumes" | grep -c .) in
     0)
-        echo "bench/ceiling.sh: no docker volume of the stand; run bench/run.sh once or give --volume" >&2
+        echo "bench/ceiling.sh: no docker volume of the stand; run bench/measure.sh once or give --volume" >&2
         exit 2
         ;;
     1) volume=$volumes ;;
     *)
         # Every checkout directory is a compose project of its own, with its
-        # own volume: the one to measure is the one that bench/run.sh uses.
+        # own volume: the one to measure is the one that bench/measure.sh uses.
         echo "bench/ceiling.sh: several volumes, give the one of the stand with --volume:" >&2
         printf '  %s\n' $volumes >&2
         exit 2
@@ -85,7 +87,7 @@ if [ -z "$volume" ]; then
     esac
 fi
 if ! $DOCKER image inspect "$image" > /dev/null 2>&1; then
-    echo "bench/ceiling.sh: no image '$image'; build it with bench/run.sh" >&2
+    echo "bench/ceiling.sh: no image '$image'; build it with bench/measure.sh" >&2
     exit 2
 fi
 

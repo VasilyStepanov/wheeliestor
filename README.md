@@ -29,7 +29,7 @@ make -j$(nproc)
 make test
 ```
 
-Стенд из двух контейнеров и скрипт замеров `bench/run.sh` описаны в
+Стенд из двух контейнеров и скрипт замеров `bench/measure.sh` описаны в
 [docs/bench.md](docs/bench.md); как мерить на новом железе, читать результаты
 и искать, где потеряна скорость, — в [docs/methodology.md](docs/methodology.md).
 

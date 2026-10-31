@@ -1,5 +1,5 @@
 # Puts the server's file on a block device, with no filesystem in the way:
-# bench/run.sh --data device takes the device from WHEELIE_DEVICE. The device
+# bench/measure.sh --data device takes the device from WHEELIE_DEVICE. The device
 # is written to, so it must be one that nothing else uses.
 
 services:
