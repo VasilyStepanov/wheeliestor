@@ -11,9 +11,10 @@ set -eu
 usage() {
     cat << 'USAGE'
 Использование: bench/matrix.sh [параметры] [параметры bench/measure.sh]
+Значение параметра можно писать и через равенство: --depth=16 вместо --depth 16.
 
   --out DIR         куда класть результаты (по умолчанию: results/matrix-ДАТА)
-  --variants LIST   варианты, список в кавычках (по умолчанию: "libc alibc uring")
+  --variants LIST   варианты через запятую (по умолчанию: libc,alibc,uring)
   --seed N          зерно порядка вариантов (по умолчанию: время; оно
                     печатается, чтобы порядок можно было повторить)
   --dry-run         только сказать, что будет запущено
@@ -71,12 +72,15 @@ LOADS=(
     seqwrite_1m_nj4:write:1m:4:4
 )
 
-out="" variants="libc alibc uring" dry_run=0 build=1 seed="" submit_url="" no_submit=0
+out="" variants="libc,alibc,uring" dry_run=0 build=1 seed="" submit_url="" no_submit=0
 passed=()
 # A run is long unless the caller says otherwise.
 runtime_default=(--runtime 15) ramp_default=(--ramp 5)
 
 while [ $# -gt 0 ]; do
+    # --option=value is --option value: split once here, where a value that was taken
+    # by an option never comes to be looked at.
+    case $1 in --*=*) set -- "${1%%=*}" "${1#*=}" "${@:2}" ;; esac
     case $1 in
     --out) out=$2; shift 2 ;;
     --variants) variants=$2; shift 2 ;;
@@ -91,6 +95,8 @@ while [ $# -gt 0 ]; do
     *) passed+=("$1"); shift ;;
     esac
 done
+
+variants=${variants//,/ }
 
 cd "$(dirname "$0")/.."
 [ -n "$out" ] || out="results/matrix-$(date +%Y%m%d-%H%M%S)"

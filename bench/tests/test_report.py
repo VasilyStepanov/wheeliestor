@@ -427,3 +427,37 @@ class DockerCommandTest(unittest.TestCase):
         no_sudo = self.choose(docker=self.DENIED)
         self.assertEqual(no_sudo.returncode, 2)
         self.assertIn("group docker", no_sudo.stderr)
+
+
+class OptionSyntaxTest(unittest.TestCase):
+    """--option=value is --option value, in the scripts that parse their options themselves."""
+
+    def run_script(self, script, *arguments):
+        return subprocess.run([os.path.join(BENCH, script), *arguments], capture_output=True, text=True)
+
+    def test_a_value_after_an_equals_sign_is_taken_as_a_separate_one(self):
+        # The check of the value comes before anything is started: it names the option and
+        # fails for the value that the equals sign carried.
+        self.assertIn("--backend must be libc, alibc or uring",
+                      self.run_script("measure.sh", "--backend=epoll").stderr)
+        self.assertIn("--direct must be 0 or 1", self.run_script("measure.sh", "--direct=7").stderr)
+        # A value that has an equals sign of its own is split at the first one only.
+        self.assertIn("unknown option '--nosuch'", self.run_script("measure.sh", "--nosuch=a=b").stderr)
+
+    def test_the_matrix_takes_equals_signs_and_commas(self):
+        spelled = self.run_script("matrix.sh", "--dry-run", "--seed=5", "--variants=libc,uring", "--depth=128")
+        self.assertEqual(spelled.returncode, 0, spelled.stderr)
+        runs = [line for line in spelled.stdout.splitlines() if "measure.sh" in line]
+        self.assertEqual(len(runs), 2 * 10)
+        self.assertEqual({line.split("--backend ")[1].split(" ")[0] for line in runs}, {"libc", "uring"})
+        self.assertTrue(all(line.endswith("--depth 128") for line in runs))
+        separate = self.run_script("matrix.sh", "--dry-run", "--seed", "5", "--variants", "libc,uring", "--depth", "128")
+        self.assertEqual([l for l in spelled.stdout.splitlines() if "measure.sh" in l],
+                         [l for l in separate.stdout.splitlines() if "measure.sh" in l])
+        self.assertIn("unknown variant", self.run_script("matrix.sh", "--dry-run", "--variants=libc,epoll").stderr)
+
+    def test_a_fio_argument_with_an_equals_sign_is_not_split(self):
+        # The value of --fio-arg is taken by the option, not looked at as an option.
+        text = self.run_script("measure.sh", "--fio-arg=--rate_iops=100", "--backend=epoll").stderr
+        self.assertIn("--backend must be", text)
+        self.assertNotIn("unknown option", text)

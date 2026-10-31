@@ -11,6 +11,7 @@ set -eu
 usage() {
     cat << 'USAGE'
 Использование: bench/measure.sh [параметры]
+Значение параметра можно писать и через равенство: --depth=16 вместо --depth 16.
 
 Нагрузка:
   --bs SIZE         размер блока (по умолчанию: 4k)
@@ -87,6 +88,9 @@ profile=0 profile_window="" submit_url="" no_submit=0
 extra_fio=()
 
 while [ $# -gt 0 ]; do
+    # --option=value is --option value: split once here, where a value that was taken
+    # by an option never comes to be looked at.
+    case $1 in --*=*) set -- "${1%%=*}" "${1#*=}" "${@:2}" ;; esac
     case $1 in
     --bs) bs=$2; shift 2 ;;
     --mode) mode=$2; shift 2 ;;

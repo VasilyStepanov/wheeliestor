@@ -11,6 +11,7 @@ set -eu
 usage() {
     cat << 'USAGE'
 Использование: bench/ceiling.sh [параметры]
+Значение параметра можно писать и через равенство: --depth=16 вместо --depth 16.
 
   --out DIR         куда класть результаты (по умолчанию: results/ceiling)
   --runtime SEC     замеряемое время каждого прогона (по умолчанию: 15)
@@ -51,6 +52,9 @@ out=results/ceiling runtime=15 ramp=5 size=1g volume="" device="" image=wheelies
 stand_file=0 sync=1
 
 while [ $# -gt 0 ]; do
+    # --option=value is --option value: split once here, where a value that was taken
+    # by an option never comes to be looked at.
+    case $1 in --*=*) set -- "${1%%=*}" "${1#*=}" "${@:2}" ;; esac
     case $1 in
     --out) out=$2; shift 2 ;;
     --runtime) runtime=$2; shift 2 ;;
