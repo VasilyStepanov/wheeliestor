@@ -32,7 +32,7 @@
   его), не запускайте второй замер. Стенд один, и всё, что на нём работает,
   попадает в цифры.
 - **Проверяйте, что измерили то, что хотели.** Строка `== server:` в выводе
-  `bench/run.sh` и файл `<имя>.server` рядом с результатом показывают, с какими
+  `bench/measure.sh` и файл `<имя>.server` рядом с результатом показывают, с какими
   бэкендом, потоками и `O_DIRECT` на самом деле запущен сервер.
 
 ## Подготовка
@@ -150,7 +150,7 @@ docker compose build; docker tag wheeliestor-server:latest wheeliestor-server:be
 docker compose build; docker tag wheeliestor-server:latest wheeliestor-server:after
 for rep in 1 2 3; do for v in before after; do
   docker tag wheeliestor-server:$v wheeliestor-server:latest
-  bench/run.sh --no-build --name ab_${v}_r$rep --out results/ab …
+  bench/measure.sh --no-build --name ab_${v}_r$rep --out results/ab …
 done; done
 ```
 
@@ -246,10 +246,10 @@ uring на глубине 16 и почти ничего у libc. Если на �
 своё соединение):
 
 ```
-bench/run.sh --mode randread --depth 16 --numjobs 1
-bench/run.sh --mode randread --depth 8  --numjobs 2
-bench/run.sh --mode randread --depth 4  --numjobs 4
-bench/run.sh --mode randread --depth 2  --numjobs 8
+bench/measure.sh --mode randread --depth 16 --numjobs 1
+bench/measure.sh --mode randread --depth 8  --numjobs 2
+bench/measure.sh --mode randread --depth 4  --numjobs 4
+bench/measure.sh --mode randread --depth 2  --numjobs 8
 ```
 
 Если IOPS растёт — на одном соединении мешает его глубина/поток, и реальные
@@ -313,12 +313,12 @@ bench/run.sh --mode randread --depth 2  --numjobs 8
 - **Имя тома.** У каждого каталога с проектом (в том числе у каждого
   worktree) своё имя проекта compose, свой том и свой файл `disk.img`:
   `docker volume ls`. Измеряйте потолок на томе того каталога, откуда
-  запускаете `bench/run.sh` (`bench/ceiling.sh --volume ИМЯ`); результаты
+  запускаете `bench/measure.sh` (`bench/ceiling.sh --volume ИМЯ`); результаты
   разных томов сравнивайте с оглядкой на то, что скорость записи на
   виртуальном диске зависит от файла и от часа. В примерах —
   `wheeliestor_data`.
 - **`sudo` и окружение.** `sudo docker` не получает переменные окружения
-  скрипта; `bench/run.sh` передаёт настройки через файл окружения, поэтому
+  скрипта; `bench/measure.sh` передаёт настройки через файл окружения, поэтому
   свои переменные для контейнеров нужно добавлять в compose.
 - **Фильтры по `error` в логах сборки** ловят `-Werror`; ищите
   `error:` или `***`.

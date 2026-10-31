@@ -10,7 +10,7 @@
 
 ```mermaid
 flowchart LR
-    script["bench/run.sh"] --> compose["docker compose"]
+    script["bench/measure.sh"] --> compose["docker compose"]
     compose --> server["контейнер server: wheelie-server"]
     compose --> client["контейнер client: fio и wheelie.so"]
     client -- "сеть compose, TCP 39900" --> server
@@ -25,7 +25,7 @@ flowchart LR
 получен: `git submodule update --init --depth 1`).
 
 ```
-bench/run.sh --mode randread --bs 4k --depth 16 --numjobs 1 --backend uring
+bench/measure.sh --mode randread --bs 4k --depth 16 --numjobs 1 --backend uring
 ```
 
 Если вы не в группе `docker`, скрипту можно сказать `DOCKER="sudo docker"`.
@@ -91,7 +91,7 @@ bench/run.sh --mode randread --bs 4k --depth 16 --numjobs 1 --backend uring
 сразу несколько готовых завершений:
 
 ```
-bench/run.sh --mode randread --depth 16 --numjobs 8 --threads 4 \
+bench/measure.sh --mode randread --depth 16 --numjobs 8 --threads 4 \
     --backend uring --multishot --server-cpus 8-11 --client-cpus 12-19 \
     --complete-max 16 --runtime 60 --ramp 5 --out results/pinned
 ```
@@ -160,7 +160,7 @@ bench/matrix.sh
 | `--no-build` | образы собираются                    | не собирать образы                     |
 
 Всё остальное (`--runtime`, `--ramp`, `--direct`, `--sync`, `--threads`,
-`--size`) передаётся в `bench/run.sh` для каждого прогона. Прогон, у которого в
+`--size`) передаётся в `bench/measure.sh` для каждого прогона. Прогон, у которого в
 каталоге уже есть результат, не повторяется, поэтому прерванную матрицу можно
 запустить ещё раз с тем же `--out`, и она продолжится. Нагрузки идут снаружи,
 а варианты внутри, так что результаты одной нагрузки получены в близкое время.
@@ -235,14 +235,14 @@ root. Профиль есть только на Linux: на macOS процесс
 Desktop, и снаружи их не записать.
 
 ```
-bench/run.sh --backend uring --mode randwrite --sync 1 --numjobs 8 \
+bench/measure.sh --backend uring --mode randwrite --sync 1 --numjobs 8 \
     --runtime 40 --profile --name write_uring
 bench/layers.py layers write_uring.server.perf --process wheelie-server
 ```
 
 ## Отправка результатов
 
-`bench/run.sh` и `bench/matrix.sh` **по умолчанию отправляют каждый результат**
+`bench/measure.sh` и `bench/matrix.sh` **по умолчанию отправляют каждый результат**
 на сервер результатов `http://wheelie.rawstor.io` (wheelieresults) сразу после
 замера. Другой сервер задаёт `--submit URL` (или переменная окружения
 `WHEELIE_RESULTS_URL`), а отправку целиком отключает `--no-submit`. Если сервер
@@ -284,13 +284,13 @@ bench/layers.py layers write_uring.server.perf --process wheelie-server
 
 ```
 # результат уходит на сервер по умолчанию, ничего указывать не нужно
-bench/run.sh --backend uring --mode randread
+bench/measure.sh --backend uring --mode randread
 
 # не отправлять
-bench/run.sh --backend uring --mode randread --no-submit
+bench/measure.sh --backend uring --mode randread --no-submit
 
 # на другой сервер
-bench/run.sh --backend uring --mode randread --submit http://results.example:8080
+bench/measure.sh --backend uring --mode randread --submit http://results.example:8080
 
 # готовые результаты, целым каталогом
 bench/submit.py results/matrix
@@ -305,7 +305,7 @@ bench/submit.py --dry-run results/matrix
 bench/submit.py --whoami --url http://results.example:8080
 ```
 
-`bench/run.sh` и `bench/matrix.sh` (если не `--no-submit`) печатают его перед первым
+`bench/measure.sh` и `bench/matrix.sh` (если не `--no-submit`) печатают его перед первым
 прогоном (у матрицы вывод каждого прогона уходит в `run.log`, поэтому имя
 печатается один раз, после сборки образов и прямо перед первым прогоном, чтобы
 его не унёс вывод сборки). С этим именем или ссылкой из той же строки

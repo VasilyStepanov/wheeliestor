@@ -451,7 +451,7 @@ class MainTest(unittest.TestCase):
         self.assertEqual(len(lines), 1)
         self.assertIn("/?client=", lines[0])
         # A submit says it at the start and again with the link at the end; with
-        # --no-whoami, which bench/run.sh uses after it has said it, only the end.
+        # --no-whoami, which bench/measure.sh uses after it has said it, only the end.
         self.assertEqual(len(said(["--url", fake.url, "--code", "c", "DIR"])), 2)
         self.assertEqual(len(said(["--no-whoami", "--url", fake.url, "--code", "c", "DIR"])), 1)
 

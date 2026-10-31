@@ -2,7 +2,7 @@ EXTRA_DIST = ceiling.sh \
              layers.py \
              matrix.sh \
              report.py \
-             run.sh \
+             measure.sh \
              submit.py \
              tests/test_layers.py \
              tests/test_report.py \

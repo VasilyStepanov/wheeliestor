@@ -255,7 +255,7 @@ class MatrixTest(unittest.TestCase):
     def test_every_variant_runs_every_load(self):
         result = self.dry_run("--variants", ALL_VARIANTS)
         self.assertEqual(result.returncode, 0, result.stderr)
-        runs = [line for line in result.stdout.splitlines() if "bench/run.sh" in line]
+        runs = [line for line in result.stdout.splitlines() if "bench/measure.sh" in line]
         self.assertEqual(len(runs), 4 * 10)
         multishot = next(r for r in runs if "randread_qd16_nj8_uring-ms" in r)
         self.assertIn("--mode randread --bs 4k --depth 16 --numjobs 8 "
@@ -271,7 +271,7 @@ class MatrixTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         names = []
         for line in result.stdout.splitlines():
-            if "bench/run.sh" in line:
+            if "bench/measure.sh" in line:
                 names.append(line.split("--name ")[1].split(" ")[0])
         return names
 
@@ -337,7 +337,7 @@ class MatrixTest(unittest.TestCase):
 
     def test_what_is_not_its_own_goes_to_run_sh(self):
         result = self.dry_run("--variants", "libc", "--runtime", "5", "--direct", "0")
-        runs = [line for line in result.stdout.splitlines() if "bench/run.sh" in line]
+        runs = [line for line in result.stdout.splitlines() if "bench/measure.sh" in line]
         self.assertEqual(len(runs), 10)
         self.assertTrue(all(line.endswith("--runtime 5 --direct 0") for line in runs))
         # The runtime that was asked for is the only one, and the ramp keeps its default.
@@ -345,19 +345,19 @@ class MatrixTest(unittest.TestCase):
 
     def test_a_run_is_long_unless_it_is_told_otherwise(self):
         result = self.dry_run("--variants", "libc")
-        runs = [line for line in result.stdout.splitlines() if "bench/run.sh" in line]
+        runs = [line for line in result.stdout.splitlines() if "bench/measure.sh" in line]
         self.assertTrue(all("--runtime 15 --ramp 5" in line for line in runs))
         result = self.dry_run("--variants", "libc", "--ramp", "2")
-        runs = [line for line in result.stdout.splitlines() if "bench/run.sh" in line]
+        runs = [line for line in result.stdout.splitlines() if "bench/measure.sh" in line]
         self.assertTrue(all("--runtime 15" in line and line.count("--ramp") == 1 for line in runs))
 
     def test_the_results_go_to_the_default_server_unless_told_otherwise(self):
         def run_lines(*arguments):
             result = self.dry_run("--variants", "libc", *arguments)
             self.assertEqual(result.returncode, 0, result.stderr)
-            return [line for line in result.stdout.splitlines() if "bench/run.sh" in line]
+            return [line for line in result.stdout.splitlines() if "bench/measure.sh" in line]
 
-        # Nothing is said: run.sh sends to its default, so the command has no option of it.
+        # Nothing is said: measure.sh sends to its default, so the command has no option of it.
         self.assertTrue(all("submit" not in line.replace("--no-build", "") for line in run_lines()))
         self.assertTrue(all(line.endswith("--no-submit") for line in run_lines("--no-submit")))
         self.assertTrue(all(line.endswith("--submit http://results.example") for line in run_lines("--submit", "http://results.example")))

@@ -2,7 +2,7 @@
 # that the requests cross a real network stack, and the server's file is on a
 # volume, so that it is a real file on a real disk.
 #
-# Run it with bench/run.sh, which gives the server the variant to test.
+# Run it with bench/measure.sh, which gives the server the variant to test.
 
 x-wheelie: &wheelie
   # Docker's default seccomp profile does not let io_uring's system calls

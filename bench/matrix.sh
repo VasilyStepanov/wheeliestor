@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Runs bench/run.sh for every variant on every load of a fixed set, keeps the
+# Runs bench/measure.sh for every variant on every load of a fixed set, keeps the
 # results in one directory and makes a table and a chart of them with
 # bench/report.py.
 #
@@ -10,7 +10,7 @@ set -eu
 
 usage() {
     cat << 'USAGE'
-Использование: bench/matrix.sh [параметры] [параметры bench/run.sh]
+Использование: bench/matrix.sh [параметры] [параметры bench/measure.sh]
 
   --out DIR         куда класть результаты (по умолчанию: results/matrix-ДАТА)
   --variants LIST   варианты, список в кавычках (по умолчанию: "libc alibc uring")
@@ -26,7 +26,7 @@ usage() {
 
 Вариант: libc, alibc, uring или uring-ms (uring с multishot recv).
 Всё, что не параметр этого скрипта, например --runtime, --ramp, --direct,
---sync, --threads или --size, передаётся в bench/run.sh для каждого прогона.
+--sync, --threads или --size, передаётся в bench/measure.sh для каждого прогона.
 Прогон длится 15 секунд после разгона 5 (прогонов в матрице немного, чтобы
 каждый мог быть долгим); --runtime и --ramp меняют это.
 
@@ -53,7 +53,7 @@ usage() {
 её снова с тем же --out.
 
 Окружение:
-  DOCKER            команда docker, как у bench/run.sh
+  DOCKER            команда docker, как у bench/measure.sh
 USAGE
 }
 
@@ -165,7 +165,7 @@ for load in "${LOADS[@]}"; do
             echo "== [$number/$total] $run_name: done already"
             continue
         fi
-        command=(bench/run.sh --no-build --name "$run_name" --out "$out"
+        command=(bench/measure.sh --no-build --name "$run_name" --out "$out"
             --mode "$mode" --bs "$bs" --depth "$depth" --numjobs "$numjobs"
             $(variant_options "$variant") ${runtime_default[@]+"${runtime_default[@]}"} ${ramp_default[@]+"${ramp_default[@]}"}
             ${submit_options[@]+"${submit_options[@]}"} ${passed[@]+"${passed[@]}"})

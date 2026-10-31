@@ -3,7 +3,7 @@
 
     bench/layers.py perf.data --process wheelie-server
 
-bench/run.sh --profile records the server and the client of a run with
+bench/measure.sh --profile records the server and the client of a run with
 `perf record`, and this script turns each recording into the share of the
 cycles that every layer of the path of a request has:
 

@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Sends the results of bench/run.sh to a server of results.
+"""Sends the results of bench/measure.sh to a server of results.
 
     bench/submit.py --url http://results.example:8080 --code THE-CODE results/matrix
 
-Without --url a result goes to DEFAULT_URL (below), and bench/run.sh and
+Without --url a result goes to DEFAULT_URL (below), and bench/measure.sh and
 bench/matrix.sh send what they measure there unless they are told --no-submit.
 
-What is sent for a result, from the files that bench/run.sh keeps next to it:
+What is sent for a result, from the files that bench/measure.sh keeps next to it:
 
   * the JSON of fio, whole, and its plain output (`<name>.txt`), which is what a
     person reads;
@@ -17,7 +17,7 @@ What is sent for a result, from the files that bench/run.sh keeps next to it:
     frequency of the processor (the governor of cpufreq, the driver, the
     preference of energy, the boost, the range): is it set to save energy or to
     perform;
-  * the profile, if there is a `<name>.profile.json` (bench/run.sh --profile),
+  * the profile, if there is a `<name>.profile.json` (bench/measure.sh --profile),
     that is where the time goes.
 
 The machine is told apart by a client id: a random number that this script
@@ -31,7 +31,7 @@ To know the name before anything is sent, ask for it:
     bench/submit.py --whoami --url http://results.example:8080
 
 The name and the link of the results are printed at the start of every submit
-too, and bench/run.sh --submit and bench/matrix.sh --submit print them before
+too, and bench/measure.sh --submit and bench/matrix.sh --submit print them before
 the first run, so that you can look for yourself on the page while it goes.
 
 The server takes a result with a token. The script gets it for a code and keeps
@@ -48,7 +48,7 @@ Environment:
   WHEELIE_RESULTS_URL    the address of the server (instead of --url; default: DEFAULT_URL)
   WHEELIE_RESULTS_CODE   another code than PUBLIC_CODE (instead of --code)
   WHEELIE_RESULTS_TOKEN  a token, if you have one (instead of --code)
-  DOCKER                 the docker command, as for bench/run.sh
+  DOCKER                 the docker command, as for bench/measure.sh
 """
 
 import argparse
@@ -371,7 +371,7 @@ CLOCK_TICKS = 100  # USER_HZ of Linux, the unit of utime and stime in /proc
 
 
 def server_load(text, runtime, iops):
-    """What the server spent in the measured window, out of the lines of bench/run.sh.
+    """What the server spent in the measured window, out of the lines of bench/measure.sh.
 
     A line is the time in ms, the ticks of the server in user and in kernel code, and its
     voluntary and involuntary context switches. The window is the last `runtime` seconds
@@ -613,7 +613,7 @@ def russian(parser):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="Отправляет результаты bench/run.sh на сервер результатов.",
+    parser = argparse.ArgumentParser(description="Отправляет результаты bench/measure.sh на сервер результатов.",
                                      epilog="Что отправляется, описано в начале этого файла.",
                                      formatter_class=RussianFormatter, add_help=False)
     parser.add_argument("paths", nargs="*", help="каталоги результатов или .json-файлы fio")

@@ -4,13 +4,13 @@
 # reports. The server is started with the variant to test, and fio runs in the
 # client container with the wheelie engine, with the same variant on its side.
 #
-# See `bench/run.sh --help`, and docs/bench.md.
+# See `bench/measure.sh --help`, and docs/bench.md.
 
 set -eu
 
 usage() {
     cat << 'USAGE'
-Использование: bench/run.sh [параметры]
+Использование: bench/measure.sh [параметры]
 
 Нагрузка:
   --bs SIZE         размер блока (по умолчанию: 4k)
@@ -120,12 +120,12 @@ while [ $# -gt 0 ]; do
     --no-build) build=0; shift ;;
     --keep) keep=1; shift ;;
     -h | --help) usage; exit 0 ;;
-    *) echo "bench/run.sh: unknown option '$1'" >&2; usage >&2; exit 2 ;;
+    *) echo "bench/measure.sh: unknown option '$1'" >&2; usage >&2; exit 2 ;;
     esac
 done
 
 if [ "$no_submit" = 1 ] && [ -n "$submit_url" ]; then
-    echo "bench/run.sh: --submit and --no-submit together make no sense" >&2
+    echo "bench/measure.sh: --submit and --no-submit together make no sense" >&2
     exit 2
 fi
 # Where a result goes: the server that is told, or, if none, the one that bench/submit.py has.
@@ -134,12 +134,12 @@ submit_args=()
 
 case $backend in
 libc | alibc | uring) ;;
-*) echo "bench/run.sh: --backend must be libc, alibc or uring" >&2; exit 2 ;;
+*) echo "bench/measure.sh: --backend must be libc, alibc or uring" >&2; exit 2 ;;
 esac
 [ -n "$client_backend" ] || client_backend=$backend
 case $client_backend in
 libc | alibc | uring) ;;
-*) echo "bench/run.sh: --client-backend must be libc, alibc or uring" >&2; exit 2 ;;
+*) echo "bench/measure.sh: --client-backend must be libc, alibc or uring" >&2; exit 2 ;;
 esac
 if [ -z "$client_multishot" ]; then
     client_multishot=0
@@ -147,45 +147,45 @@ if [ -z "$client_multishot" ]; then
 fi
 case $client_multishot in
 0 | 1) ;;
-*) echo "bench/run.sh: --client-multishot must be 0 or 1" >&2; exit 2 ;;
+*) echo "bench/measure.sh: --client-multishot must be 0 or 1" >&2; exit 2 ;;
 esac
 if [ "$client_multishot" = 1 ] && [ "$client_backend" != uring ]; then
-    echo "bench/run.sh: multishot receive is only for the uring backend of the client" >&2
+    echo "bench/measure.sh: multishot receive is only for the uring backend of the client" >&2
     exit 2
 fi
 case $direct in
 0 | 1) ;;
-*) echo "bench/run.sh: --direct must be 0 or 1" >&2; exit 2 ;;
+*) echo "bench/measure.sh: --direct must be 0 or 1" >&2; exit 2 ;;
 esac
 case $data in
 disk | tmpfs) ;;
 device)
     if [ -z "${WHEELIE_DEVICE:-}" ] || [ ! -b "$WHEELIE_DEVICE" ]; then
-        echo "bench/run.sh: --data device needs WHEELIE_DEVICE, a block device" >&2
+        echo "bench/measure.sh: --data device needs WHEELIE_DEVICE, a block device" >&2
         exit 2
     fi
     ;;
-*) echo "bench/run.sh: --data must be disk, tmpfs or device" >&2; exit 2 ;;
+*) echo "bench/measure.sh: --data must be disk, tmpfs or device" >&2; exit 2 ;;
 esac
 
 fio_options=()
 if [ -n "$complete_max" ]; then
     if ! [[ $complete_max =~ ^[1-9][0-9]*$ ]]; then
-        echo "bench/run.sh: --complete-max must be a positive number" >&2
+        echo "bench/measure.sh: --complete-max must be a positive number" >&2
         exit 2
     fi
     fio_options+=(--iodepth_batch_complete_max="$complete_max")
 fi
 if [ -n "$complete_min" ]; then
     if ! [[ $complete_min =~ ^[0-9]+$ ]]; then
-        echo "bench/run.sh: --complete-min must be a non-negative number" >&2
+        echo "bench/measure.sh: --complete-min must be a non-negative number" >&2
         exit 2
     fi
     fio_options+=(--iodepth_batch_complete_min="$complete_min")
 fi
 if [ -n "$submit_batch" ]; then
     if ! [[ $submit_batch =~ ^[1-9][0-9]*$ ]]; then
-        echo "bench/run.sh: --submit-batch must be a positive number" >&2
+        echo "bench/measure.sh: --submit-batch must be a positive number" >&2
         exit 2
     fi
     fio_options+=(--iodepth_batch_submit="$submit_batch")
@@ -208,7 +208,7 @@ to_mb() {
     k | kb | kib) echo $(((number + 1023) / 1024)) ;;
     m | mb | mib) echo "$number" ;;
     g | gb | gib) echo $((number * 1024)) ;;
-    *) echo "bench/run.sh: cannot read the size '$1'" >&2; exit 2 ;;
+    *) echo "bench/measure.sh: cannot read the size '$1'" >&2; exit 2 ;;
     esac
 }
 
@@ -222,23 +222,23 @@ if [ "$profile" = 1 ]; then
     fi
     case $profile_window in
     '' | *[!0-9]* | 0)
-        echo "bench/run.sh: --profile-window must be a positive number" >&2
+        echo "bench/measure.sh: --profile-window must be a positive number" >&2
         exit 2
         ;;
     esac
     if [ "$profile_window" -gt $((runtime - 2)) ] || [ "$profile_window" -lt 1 ]; then
-        echo "bench/run.sh: --profile needs a measured time (--runtime) of at least window + 2 seconds" >&2
+        echo "bench/measure.sh: --profile needs a measured time (--runtime) of at least window + 2 seconds" >&2
         exit 2
     fi
     if ! command -v perf > /dev/null 2>&1; then
-        echo "bench/run.sh: --profile needs perf" >&2
+        echo "bench/measure.sh: --profile needs perf" >&2
         exit 2
     fi
 fi
 
 case $queues in
 '' | *[!0-9]* | 0)
-    echo "bench/run.sh: --queues must be a positive number" >&2
+    echo "bench/measure.sh: --queues must be a positive number" >&2
     exit 2
     ;;
 esac
@@ -326,7 +326,7 @@ if [ "$build" = 1 ]; then
 fi
 
 if ! compose up -d --force-recreate --wait server; then
-    echo "bench/run.sh: the server does not start:" >&2
+    echo "bench/measure.sh: the server does not start:" >&2
     compose logs server >&2 || true
     exit 1
 fi
@@ -338,7 +338,7 @@ echo "== server: ${started#wheelie-server: }"
 case $started in
 *"($backend$ms_text, "*"$direct_text)") ;;
 *)
-    echo "bench/run.sh: the server was not started as asked ($backend$ms_text, direct=$direct)" >&2
+    echo "bench/measure.sh: the server was not started as asked ($backend$ms_text, direct=$direct)" >&2
     exit 1
     ;;
 esac
@@ -351,7 +351,7 @@ else
     data_type=$(compose exec -T server stat -f -c %T /data | tr -d '\r')
     echo "== server: the file is on $data_type"
     if [ "$data" = tmpfs ] && [ "$data_type" != tmpfs ]; then
-        echo "bench/run.sh: the server's file is not in memory ($data_type)" >&2
+        echo "bench/measure.sh: the server's file is not in memory ($data_type)" >&2
         exit 1
     fi
 fi
@@ -396,7 +396,7 @@ record_profile() {
         sleep 0.5
     done
     if [ -z "$server_pid" ] || [ -z "$fio_pid" ]; then
-        echo "bench/run.sh: the processes of the server and of fio are not found, no profile" >&2
+        echo "bench/measure.sh: the processes of the server and of fio are not found, no profile" >&2
         return 1
     fi
     sleep $((ramp + 1))
@@ -480,10 +480,10 @@ if [ "$profile" = 1 ]; then
             privileged rm -f "$out_abs/$name.server.perf" "$out_abs/$name.client.perf"
             echo "profile: $out/$name.profile.json"
         else
-            echo "bench/run.sh: the profile was not made; the recordings are $out/$name.*.perf" >&2
+            echo "bench/measure.sh: the profile was not made; the recordings are $out/$name.*.perf" >&2
         fi
     else
-        echo "bench/run.sh: no recordings of perf, no profile" >&2
+        echo "bench/measure.sh: no recordings of perf, no profile" >&2
     fi
 fi
 
@@ -492,5 +492,5 @@ echo "results: $out/$name.txt, $out/$name.json, $out/$name.server"
 if [ "$no_submit" = 0 ]; then
     # A result that is not sent is not a failed run: it stays in the directory.
     python3 -I "$here/submit.py" --no-whoami ${submit_args[@]+"${submit_args[@]}"} "$out_abs/$name.json" \
-        || echo "bench/run.sh: the result was not submitted; bench/submit.py can send it later" >&2
+        || echo "bench/measure.sh: the result was not submitted; bench/submit.py can send it later" >&2
 fi
