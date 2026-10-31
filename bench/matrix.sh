@@ -11,9 +11,10 @@ set -eu
 usage() {
     cat << 'USAGE'
 Использование: bench/matrix.sh [параметры] [параметры bench/measure.sh]
+Значение параметра можно писать и через равенство: --depth=16 вместо --depth 16.
 
   --out DIR         куда класть результаты (по умолчанию: results/matrix-ДАТА)
-  --variants LIST   варианты, список в кавычках (по умолчанию: "libc alibc uring")
+  --variants LIST   варианты через запятую (по умолчанию: libc,alibc,uring)
   --seed N          зерно порядка вариантов (по умолчанию: время; оно
                     печатается, чтобы порядок можно было повторить)
   --dry-run         только сказать, что будет запущено
@@ -27,6 +28,9 @@ usage() {
 Вариант: libc, alibc, uring или uring-ms (uring с multishot recv).
 Всё, что не параметр этого скрипта, например --runtime, --ramp, --direct,
 --sync, --threads или --size, передаётся в bench/measure.sh для каждого прогона.
+Нагрузку и вариант задаёт сама матрица, поэтому --bs, --mode, --depth, --numjobs,
+--queues, --backend, --multishot и --name здесь не принимаются (вариантов
+касается --variants): одну нагрузку с другими параметрами мерит bench/measure.sh.
 Прогон длится 15 секунд после разгона 5 (прогонов в матрице немного, чтобы
 каждый мог быть долгим); --runtime и --ramp меняют это.
 
@@ -71,12 +75,15 @@ LOADS=(
     seqwrite_1m_nj4:write:1m:4:4
 )
 
-out="" variants="libc alibc uring" dry_run=0 build=1 seed="" submit_url="" no_submit=0
+out="" variants="libc,alibc,uring" dry_run=0 build=1 seed="" submit_url="" no_submit=0
 passed=()
 # A run is long unless the caller says otherwise.
 runtime_default=(--runtime 15) ramp_default=(--ramp 5)
 
 while [ $# -gt 0 ]; do
+    # --option=value is --option value: split once here, where a value that was taken
+    # by an option never comes to be looked at.
+    case $1 in --*=*) set -- "${1%%=*}" "${1#*=}" "${@:2}" ;; esac
     case $1 in
     --out) out=$2; shift 2 ;;
     --variants) variants=$2; shift 2 ;;
@@ -86,11 +93,21 @@ while [ $# -gt 0 ]; do
     --no-submit) no_submit=1; shift ;;
     --no-build) build=0; shift ;;
     -h | --help) usage; exit 0 ;;
+    --bs | --mode | --depth | --numjobs | --queues | --name)
+        echo "bench/matrix.sh: $1 is set by the matrix for every load; for one load of your own use bench/measure.sh" >&2
+        exit 2
+        ;;
+    --backend | --multishot)
+        echo "bench/matrix.sh: $1 is set by the matrix for every variant; the variants are --variants" >&2
+        exit 2
+        ;;
     --runtime) runtime_default=(); passed+=("$1"); shift ;;
     --ramp) ramp_default=(); passed+=("$1"); shift ;;
     *) passed+=("$1"); shift ;;
     esac
 done
+
+variants=${variants//,/ }
 
 cd "$(dirname "$0")/.."
 [ -n "$out" ] || out="results/matrix-$(date +%Y%m%d-%H%M%S)"
