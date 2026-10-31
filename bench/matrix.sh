@@ -53,7 +53,7 @@ usage() {
 её снова с тем же --out.
 
 Окружение:
-  DOCKER            команда docker, как у bench/measure.sh
+  DOCKER            команда docker, как у bench/measure.sh (по умолчанию её определяет скрипт)
 USAGE
 }
 
@@ -108,6 +108,10 @@ for variant in $variants; do
 done
 
 DOCKER=${DOCKER:-docker}
+if [ "$dry_run" = 0 ]; then
+    . "$(dirname "$0")/docker.sh"
+    choose_docker
+fi
 
 if [ "$dry_run" = 0 ] && [ "$build" = 1 ]; then
     echo "== building the images"

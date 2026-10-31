@@ -74,8 +74,8 @@ usage() {
   -h, --help        показать эту справку и выйти
 
 Окружение:
-  DOCKER            команда docker (по умолчанию: docker; `DOCKER="sudo docker"`,
-                    если вы не в группе docker)
+  DOCKER            команда docker (по умолчанию её определяет скрипт: docker, а если
+                    нет прав, то sudo docker; пароль спрашивается один раз)
 USAGE
 }
 
@@ -194,8 +194,9 @@ if [ -n "$client_cpus" ]; then
     fio_options+=(--cpus_allowed="$client_cpus" --cpus_allowed_policy=split)
 fi
 
-DOCKER=${DOCKER:-docker}
 cd "$(dirname "$0")/.."
+. bench/docker.sh
+choose_docker
 
 # fio's size, in MiB, rounded up.
 to_mb() {

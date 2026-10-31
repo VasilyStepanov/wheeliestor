@@ -1,4 +1,5 @@
 EXTRA_DIST = ceiling.sh \
+             docker.sh \
              layers.py \
              matrix.sh \
              report.py \

@@ -1,5 +1,6 @@
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -373,3 +374,56 @@ class MatrixTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DockerCommandTest(unittest.TestCase):
+    """bench/docker.sh: docker as it is, or with sudo if the user has no right to it."""
+
+    def choose(self, docker=None, sudo=None, **env):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as d:
+            for name, body in (("docker", docker), ("sudo", sudo)):
+                if body is not None:
+                    path = os.path.join(d, name)
+                    with open(path, "w") as handle:
+                        handle.write("#!/bin/bash\n" + body)
+                    os.chmod(path, 0o755)
+            # Only the commands of the test are on the PATH, besides the few that the script uses.
+            for tool in ("bash", "grep", "true", "env"):
+                os.symlink(shutil.which(tool), os.path.join(d, tool))
+            environment = {"PATH": d}
+            environment.update(env)
+            return subprocess.run(
+                ["bash", "-c", f'. {BENCH}/docker.sh; choose_docker; echo "[$DOCKER]"'],
+                capture_output=True, text=True, env=environment)
+
+    # A docker that answers, and one that refuses a user who is not in its group.
+    OPEN = "exit 0\n"
+    DENIED = ('if [ "$FAKE_SUDO" = 1 ]; then exit 0; fi\n'
+              'echo "permission denied while trying to connect to the docker API at unix:///var/run/docker.sock" >&2\n'
+              "exit 1\n")
+    SUDO = 'case "$1" in -n|-v) shift;; esac\n[ "$1" = true ] && exit 0\n[ -z "$1" ] && exit 0\nexec env FAKE_SUDO=1 "$@"\n'
+
+    def test_docker_is_used_as_it_is_when_it_answers(self):
+        result = self.choose(docker=self.OPEN)
+        self.assertEqual((result.returncode, result.stdout.strip()), (0, "[docker]"), result.stderr)
+
+    def test_sudo_is_used_when_there_is_no_permission(self):
+        result = self.choose(docker=self.DENIED, sudo=self.SUDO)
+        self.assertEqual((result.returncode, result.stdout.strip()), (0, "[sudo docker]"), result.stderr)
+
+    def test_a_command_that_is_given_is_kept(self):
+        result = self.choose(DOCKER="podman")
+        self.assertEqual((result.returncode, result.stdout.strip()), (0, "[podman]"), result.stderr)
+
+    def test_no_docker_and_a_daemon_that_does_not_answer_are_told(self):
+        missing = self.choose()
+        self.assertEqual(missing.returncode, 2)
+        self.assertIn("docker is not installed", missing.stderr)
+        down = self.choose(docker='echo "Cannot connect to the Docker daemon" >&2\nexit 1\n')
+        self.assertEqual(down.returncode, 2)
+        self.assertIn("does not answer", down.stderr)
+        no_sudo = self.choose(docker=self.DENIED)
+        self.assertEqual(no_sudo.returncode, 2)
+        self.assertIn("group docker", no_sudo.stderr)

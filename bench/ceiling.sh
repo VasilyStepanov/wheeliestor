@@ -8,8 +8,6 @@
 
 set -eu
 
-DOCKER=${DOCKER:-docker}
-
 usage() {
     cat << 'USAGE'
 Использование: bench/ceiling.sh [параметры]
@@ -42,7 +40,8 @@ usage() {
   device     (с --device) randread 4k и read 1m, без файловой системы
 
 Окружение:
-  DOCKER            команда docker (по умолчанию: docker; `DOCKER="sudo docker"`)
+  DOCKER            команда docker (по умолчанию её определяет скрипт: docker, а если
+                    нет прав, то sudo docker; пароль спрашивается один раз)
 
 Образы должны быть уже собраны (их собирает bench/measure.sh).
 USAGE
@@ -66,6 +65,9 @@ while [ $# -gt 0 ]; do
     *) echo "bench/ceiling.sh: unknown option '$1'" >&2; usage >&2; exit 2 ;;
     esac
 done
+
+. "$(dirname "$0")/docker.sh"
+choose_docker
 
 if [ -z "$volume" ]; then
     volumes=$($DOCKER volume ls --format '{{.Name}}' | grep '_data$' || true)
