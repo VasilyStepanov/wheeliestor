@@ -28,6 +28,9 @@ usage() {
 Вариант: libc, alibc, uring или uring-ms (uring с multishot recv).
 Всё, что не параметр этого скрипта, например --runtime, --ramp, --direct,
 --sync, --threads или --size, передаётся в bench/measure.sh для каждого прогона.
+Нагрузку и вариант задаёт сама матрица, поэтому --bs, --mode, --depth, --numjobs,
+--queues, --backend, --multishot и --name здесь не принимаются (вариантов
+касается --variants): одну нагрузку с другими параметрами мерит bench/measure.sh.
 Прогон длится 15 секунд после разгона 5 (прогонов в матрице немного, чтобы
 каждый мог быть долгим); --runtime и --ramp меняют это.
 
@@ -90,6 +93,14 @@ while [ $# -gt 0 ]; do
     --no-submit) no_submit=1; shift ;;
     --no-build) build=0; shift ;;
     -h | --help) usage; exit 0 ;;
+    --bs | --mode | --depth | --numjobs | --queues | --name)
+        echo "bench/matrix.sh: $1 is set by the matrix for every load; for one load of your own use bench/measure.sh" >&2
+        exit 2
+        ;;
+    --backend | --multishot)
+        echo "bench/matrix.sh: $1 is set by the matrix for every variant; the variants are --variants" >&2
+        exit 2
+        ;;
     --runtime) runtime_default=(); passed+=("$1"); shift ;;
     --ramp) ramp_default=(); passed+=("$1"); shift ;;
     *) passed+=("$1"); shift ;;

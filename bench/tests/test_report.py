@@ -445,16 +445,30 @@ class OptionSyntaxTest(unittest.TestCase):
         self.assertIn("unknown option '--nosuch'", self.run_script("measure.sh", "--nosuch=a=b").stderr)
 
     def test_the_matrix_takes_equals_signs_and_commas(self):
-        spelled = self.run_script("matrix.sh", "--dry-run", "--seed=5", "--variants=libc,uring", "--depth=128")
+        spelled = self.run_script("matrix.sh", "--dry-run", "--seed=5", "--variants=libc,uring", "--sync=0")
         self.assertEqual(spelled.returncode, 0, spelled.stderr)
         runs = [line for line in spelled.stdout.splitlines() if "measure.sh" in line]
         self.assertEqual(len(runs), 2 * 10)
         self.assertEqual({line.split("--backend ")[1].split(" ")[0] for line in runs}, {"libc", "uring"})
-        self.assertTrue(all(line.endswith("--depth 128") for line in runs))
-        separate = self.run_script("matrix.sh", "--dry-run", "--seed", "5", "--variants", "libc,uring", "--depth", "128")
+        self.assertTrue(all(line.endswith("--sync 0") for line in runs))
+        separate = self.run_script("matrix.sh", "--dry-run", "--seed", "5", "--variants", "libc,uring", "--sync", "0")
         self.assertEqual([l for l in spelled.stdout.splitlines() if "measure.sh" in l],
                          [l for l in separate.stdout.splitlines() if "measure.sh" in l])
         self.assertIn("unknown variant", self.run_script("matrix.sh", "--dry-run", "--variants=libc,epoll").stderr)
+
+    def test_the_matrix_refuses_what_it_sets_itself(self):
+        for argument in ("--depth", "--bs", "--mode", "--numjobs", "--queues", "--name"):
+            for spelled in ([argument, "x"], [argument + "=x"]):
+                result = self.run_script("matrix.sh", "--dry-run", *spelled)
+                self.assertEqual(result.returncode, 2, spelled)
+                self.assertIn("is set by the matrix for every load", result.stderr)
+        for argument in ("--backend", "--multishot"):
+            result = self.run_script("matrix.sh", "--dry-run", argument, "uring")
+            self.assertEqual(result.returncode, 2, argument)
+            self.assertIn("--variants", result.stderr)
+        # What does not change the load still goes through to the runs.
+        for argument in (["--sync=0"], ["--runtime", "20"], ["--client-backend=libc"], ["--threads=4"]):
+            self.assertEqual(self.run_script("matrix.sh", "--dry-run", *argument).returncode, 0, argument)
 
     def test_a_fio_argument_with_an_equals_sign_is_not_split(self):
         # The value of --fio-arg is taken by the option, not looked at as an option.
