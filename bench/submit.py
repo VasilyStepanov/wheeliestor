@@ -17,6 +17,8 @@ What is sent for a result, from the files that bench/measure.sh keeps next to it
     frequency of the processor (the governor of cpufreq, the driver, the
     preference of energy, the boost, the range): is it set to save energy or to
     perform;
+  * the IOPS of every second of the measured part, from `<name>_iops.log`, which fio
+    writes: the course of a run, which its summary hides;
   * the profile, if there is a `<name>.profile.json` (bench/measure.sh --profile),
     that is where the time goes.
 
@@ -368,6 +370,30 @@ def iso(seconds):
 
 
 CLOCK_TICKS = 100  # USER_HZ of Linux, the unit of utime and stime in /proc
+MAX_SERIES = 600  # the seconds of a run that are sent; a longer run is averaged down to this many
+
+
+def iops_series(text):
+    """The IOPS of every second of the measured part, from the log that fio wrote (`<name>_iops.log`).
+
+    A line is the time in ms, the IOPS that one job had in the second, the direction, the block size and the
+    offset. The jobs write one after another, so the lines of a second are summed. Nothing is told if there are
+    fewer than two seconds.
+    """
+    seconds = {}
+    for line in (text or "").splitlines():
+        parts = [part.strip() for part in line.split(",")]
+        if len(parts) < 2 or not parts[0].isdigit() or not parts[1].isdigit():
+            continue
+        second = round(int(parts[0]) / 1000.0)
+        seconds[second] = seconds.get(second, 0) + int(parts[1])
+    series = [seconds[second] for second in sorted(seconds)]
+    if len(series) < 2:
+        return []
+    if len(series) > MAX_SERIES:
+        step = -(-len(series) // MAX_SERIES)
+        series = [round(sum(series[i:i + step]) / len(series[i:i + step])) for i in range(0, len(series), step)]
+    return series
 
 
 def server_load(text, runtime, iops):
@@ -477,6 +503,9 @@ def build_submission(json_path, machine):
 
     stats = job["read"] if job["read"].get("io_bytes") else job["write"]
     run.update(server_load(read_text(base + ".server-stat"), int(options["runtime"]), stats.get("iops")))
+    series = iops_series(read_text(base + "_iops.log"))
+    if series:
+        run["iops_series"] = series
     ended = fio.get("timestamp") or time.time()
     started = ended - (stats.get("runtime", 0) / 1000.0)
 

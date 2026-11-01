@@ -365,6 +365,8 @@ if [ -n "$client_name" ]; then
     echo "== client: ${client_name#_client-}, not the variant of the server"
 fi
 echo "== fio: $mode bs=$bs depth=$depth numjobs=$numjobs queues=$queues sync=$sync, ${ramp}s ramp and ${runtime}s measured"
+# fio also writes the IOPS of every second of the measured part, all jobs together,
+# to <name>_iops.log next to the result: the course of a run, which its summary hides.
 # fio prints its progress, a line a second (the ETA), and then its normal output
 # and its JSON, all to its standard output: that is what is kept, and told apart
 # below. Without a terminal fio shows no progress unless it is made to.
@@ -381,6 +383,7 @@ run_fio() {
         --thread --group_reporting \
         ${fio_options[@]+"${fio_options[@]}"} \
         ${extra_fio[@]+"${extra_fio[@]}"} \
+        --write_iops_log="/results/$name" --log_avg_msec=1000 --per_job_logs=0 \
         --eta=always --eta-newline=1 \
         --output-format=normal,json > "$out_abs/$name.out"
 }

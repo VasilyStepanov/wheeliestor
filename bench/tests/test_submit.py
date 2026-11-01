@@ -126,6 +126,26 @@ class BuildTest(unittest.TestCase):
         self.assertEqual(submit.server_load(None, 3, 4000), {})
         self.assertEqual(submit.server_load("garbage\n1 2", 3, 4000), {})
 
+    def test_the_iops_of_every_second_come_from_the_log_of_fio(self):
+        # Two jobs, a second each: the jobs write one after another, and the lines of a second add up.
+        log = "999, 6000, 1, 0, 0\n2000, 7000, 1, 0, 0\n3001, 500, 1, 0, 0\n1000, 100, 1, 0, 0\n1999, 200, 1, 0, 0\n3000, 300, 1, 0, 0\n"
+        self.assertEqual(submit.iops_series(log), [6100, 7200, 800])
+        self.assertEqual(submit.iops_series(""), [])
+        self.assertEqual(submit.iops_series(None), [])
+        self.assertEqual(submit.iops_series("999, 6000, 1, 0, 0\n"), [])  # one second is no course
+        self.assertEqual(submit.iops_series("garbage\n1, x, 1\n999, 5, 1\n1999, 7, 1\n"), [5, 7])
+        long = "".join("%d, 10, 1, 0, 0\n" % (1000 * n) for n in range(1, 1501))
+        series = submit.iops_series(long)
+        self.assertLessEqual(len(series), submit.MAX_SERIES)
+        self.assertEqual(set(series), {10})
+        with tempfile.TemporaryDirectory() as d:
+            path = write_result(d)
+            with open(os.path.join(d, "case_iops.log"), "w") as handle:
+                handle.write(log)
+            self.assertEqual(submit.build_submission(path, MACHINE)["run"]["iops_series"], [6100, 7200, 800])
+        with tempfile.TemporaryDirectory() as d:
+            self.assertNotIn("iops_series", submit.build_submission(write_result(d), MACHINE)["run"])
+
     def test_the_run_comes_from_fio_and_the_files_next_to_it(self):
         with tempfile.TemporaryDirectory() as d:
             body = submit.build_submission(write_result(d, multishot=True), MACHINE)
