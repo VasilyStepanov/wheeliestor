@@ -126,6 +126,39 @@ class BuildTest(unittest.TestCase):
         self.assertEqual(submit.server_load(None, 3, 4000), {})
         self.assertEqual(submit.server_load("garbage\n1 2", 3, 4000), {})
 
+    def test_the_machine_around_the_server_comes_from_the_lines_of_the_sampler(self):
+        # Five seconds, a second apart. Per second: the server spends 50% of a core; the 4 processors of the machine
+        # tick 400, 20 of them in iowait and 40 in steal; the machine is stalled on io for 100 ms; the disk sda does
+        # 1000 reads and 3000 writes, is busy 500 ms, and the writes wait 2 ms each; vda does nothing.
+        lines = []
+        for k in range(6):
+            t = 1000 * (1000 + k)
+            lines.append("%d %d %d %d %d" % (t, 50 * k, 0, 10 * k, 5 * k))
+            lines.append("S %d %d 0 %d %d %d 0 0 %d" % (t, 100 * k, 100 * k, 140 * k, 20 * k, 40 * k))
+            lines.append("P %d %d %d" % (t, 100000 * k, 0))
+            lines.append("D %d vda %d %d 0 0 0 0 0" % (t, 5, 8))
+            lines.append("D %d sda %d %d %d %d %d %d %d" % (t, 1000 * k, 16000 * k, 3 * 1000 * k, 3000 * k, 24000 * k, 6000 * k, 500 * k))
+        series = submit.host_series("\n".join(lines), 3)
+        self.assertEqual(series["disk"], "sda")
+        self.assertEqual(len(series["server_cpu_pct"]), 3)
+        self.assertEqual(set(series["server_cpu_pct"]), {50.0})
+        self.assertEqual(set(series["host_iowait_pct"]), {5.0})
+        self.assertEqual(set(series["host_steal_pct"]), {10.0})
+        self.assertEqual(set(series["host_busy_pct"]), {60.0})
+        self.assertEqual(set(series["psi_io_pct"]), {10.0})
+        self.assertEqual(set(series["disk_iops"]), {4000.0})
+        self.assertEqual(set(series["disk_util_pct"]), {50.0})
+        self.assertEqual(set(series["disk_w_await_ms"]), {2.0})
+        self.assertEqual(set(series["disk_r_await_ms"]), {3.0})
+        self.assertEqual(submit.host_series("", 3), {})
+        self.assertEqual(submit.host_series(None, 3), {})
+        self.assertEqual(submit.host_series("S 1 2 3\nP x y z\ngarbage\n", 3), {})
+        with tempfile.TemporaryDirectory() as d:
+            path = write_result(d)
+            with open(os.path.join(d, "case.server-stat"), "w") as handle:
+                handle.write("\n".join(lines))
+            self.assertIn("server_cpu_pct", submit.build_submission(path, MACHINE)["run"]["host_series"])
+
     def test_the_iops_of_every_second_come_from_the_log_of_fio(self):
         # Two jobs, a second each: the jobs write one after another, and the lines of a second add up.
         log = "999, 6000, 1, 0, 0\n2000, 7000, 1, 0, 0\n3001, 500, 1, 0, 0\n1000, 100, 1, 0, 0\n1999, 200, 1, 0, 0\n3000, 300, 1, 0, 0\n"
