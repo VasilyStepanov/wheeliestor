@@ -124,7 +124,6 @@ for variant in $variants; do
     variant_options "$variant" > /dev/null
 done
 
-DOCKER=${DOCKER:-docker}
 if [ "$dry_run" = 0 ]; then
     . "$(dirname "$0")/docker.sh"
     choose_docker

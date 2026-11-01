@@ -428,6 +428,26 @@ class DockerCommandTest(unittest.TestCase):
         self.assertEqual(no_sudo.returncode, 2)
         self.assertIn("group docker", no_sudo.stderr)
 
+    def test_matrix_builds_the_images_with_sudo_when_there_is_no_permission(self):
+        import tempfile
+
+        docker = ('if [ "$FAKE_SUDO" = 1 ]; then\n'
+                  '    [ "$1" = compose ] && { echo "built with sudo"; exit 1; }\n'
+                  '    exit 0\n'
+                  'fi\n'
+                  'echo "permission denied while trying to connect to the docker API" >&2\n'
+                  'exit 1\n')
+        with tempfile.TemporaryDirectory() as d:
+            for name, body in (("docker", docker), ("sudo", self.SUDO)):
+                path = os.path.join(d, name)
+                with open(path, "w") as handle:
+                    handle.write("#!/bin/bash\n" + body)
+                os.chmod(path, 0o755)
+            result = subprocess.run(
+                [os.path.join(BENCH, "matrix.sh"), "--no-submit"], capture_output=True, text=True,
+                env=dict(os.environ, PATH=d + ":" + os.environ["PATH"], DOCKER=""))
+        self.assertIn("built with sudo", result.stdout + result.stderr)
+
 
 class OptionSyntaxTest(unittest.TestCase):
     """--option=value is --option value, in the scripts that parse their options themselves."""
