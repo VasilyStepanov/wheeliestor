@@ -313,7 +313,7 @@ cleanup() {
     if [ "$keep" = 0 ]; then
         compose down > /dev/null 2>&1 || true
     fi
-    rm -f "$env_file"
+    rm -f "$env_file" "$env_file.sampler"
 }
 trap cleanup EXIT
 
@@ -365,6 +365,8 @@ if [ -n "$client_name" ]; then
     echo "== client: ${client_name#_client-}, not the variant of the server"
 fi
 echo "== fio: $mode bs=$bs depth=$depth numjobs=$numjobs queues=$queues sync=$sync, ${ramp}s ramp and ${runtime}s measured"
+# fio also writes the IOPS of every second of the measured part, all jobs together,
+# to <name>_iops.log next to the result: the course of a run, which its summary hides.
 # fio prints its progress, a line a second (the ETA), and then its normal output
 # and its JSON, all to its standard output: that is what is kept, and told apart
 # below. Without a terminal fio shows no progress unless it is made to.
@@ -381,6 +383,7 @@ run_fio() {
         --thread --group_reporting \
         ${fio_options[@]+"${fio_options[@]}"} \
         ${extra_fio[@]+"${extra_fio[@]}"} \
+        --write_iops_log="/results/$name" --log_avg_msec=1000 --per_job_logs=0 \
         --eta=always --eta-newline=1 \
         --output-format=normal,json > "$out_abs/$name.out"
 }
@@ -412,19 +415,36 @@ record_profile() {
     wait "$server_perf" "$!" 2> /dev/null || true
 }
 
-# What the server spends, from /proc of the container, where the server is the process 1:
-# a line a second of the time (in ticks) of all its threads in user and in kernel code, and
-# of their context switches, voluntary and not. It needs nothing of the host, so it is there
-# on any Docker. bench/submit.py takes the seconds of the measured window out of the lines.
+# What the server spends, and what the machine does around it, from /proc of the container,
+# where the server is the process 1: a few lines a second, for the whole run. A line without a
+# letter in front is the time in ms, the ticks of all the threads of the server in user and in
+# kernel code, and their context switches, voluntary and not. The lines with a letter are of
+# the machine of the containers: S the ticks of its processors (user, nice, system, idle,
+# iowait, irq, softirq, steal), P the pressure of io and of cpu (stall time in us, if the kernel
+# has it), D a disk (its counters of /proc/diskstats). It needs nothing of the host, so it is
+# there on any Docker. bench/submit.py takes the seconds of the measured window out of the lines.
+sampler_script() {
+    cat << 'SH'
+n=$1; i=0
+while [ "$i" -lt "$n" ]; do
+    t=$(date +%s%3N)
+    echo "$t $(sed 's/^.*) //' /proc/1/stat | cut -d' ' -f12,13) $(cat /proc/1/task/*/status | awk '/^voluntary_ctxt_switches/ {v += $2} /^nonvoluntary_ctxt_switches/ {w += $2} END {print v, w}')"
+    awk -v t="$t" '/^cpu / {print "S", t, $2, $3, $4, $5, $6, $7, $8, $9}' /proc/stat
+    io=$(sed -n 's/^some .*total=\([0-9]*\).*/\1/p' /proc/pressure/io 2> /dev/null)
+    cp=$(sed -n 's/^some .*total=\([0-9]*\).*/\1/p' /proc/pressure/cpu 2> /dev/null)
+    [ -n "$io" ] && echo "P $t $io ${cp:-0}"
+    awk -v t="$t" '$3 ~ /^(sd[a-z]+|vd[a-z]+|xvd[a-z]+|nvme[0-9]+n[0-9]+|mmcblk[0-9]+)$/ {print "D", t, $3, $4, $6, $7, $8, $10, $11, $13}' /proc/diskstats
+    i=$((i + 1))
+    sleep 1
+done
+SH
+}
+
 sample_server() {
-    compose exec -T server sh -c '
-        i=0
-        while [ "$i" -lt "$1" ]; do
-            echo "$(date +%s%3N) $(sed "s/^.*) //" /proc/1/stat | cut -d" " -f12,13)" \
-                "$(cat /proc/1/task/*/status | awk "/^voluntary_ctxt_switches/ {v += \$2} /^nonvoluntary_ctxt_switches/ {n += \$2} END {print v, n}")"
-            i=$((i + 1))
-            sleep 1
-        done' sh $((ramp + runtime + 30)) > "$out_abs/$name.server-stat" 2> /dev/null &
+    # The script goes in on the standard input: compose() reads nothing from the terminal.
+    sampler_script > "$env_file.sampler"
+    $DOCKER compose --env-file "$env_file" "${compose_files[@]}" exec -T server sh -s -- $((ramp + runtime + 30)) \
+        < "$env_file.sampler" > "$out_abs/$name.server-stat" 2> /dev/null &
     sampler_pid=$!
 }
 

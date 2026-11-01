@@ -17,6 +17,12 @@ What is sent for a result, from the files that bench/measure.sh keeps next to it
     frequency of the processor (the governor of cpufreq, the driver, the
     preference of energy, the boost, the range): is it set to save energy or to
     perform;
+  * what the server and the machine did in every second of it: the processor time of
+    the server, of the machine (busy, iowait, steal), the stall on io and on cpu, and
+    the disk that did the most (IOPS, MiB/s, busy, the wait of a read and of a write),
+    from the lines of `<name>.server-stat`;
+  * the IOPS of every second of the measured part, from `<name>_iops.log`, which fio
+    writes: the course of a run, which its summary hides;
   * the profile, if there is a `<name>.profile.json` (bench/measure.sh --profile),
     that is where the time goes.
 
@@ -368,6 +374,109 @@ def iso(seconds):
 
 
 CLOCK_TICKS = 100  # USER_HZ of Linux, the unit of utime and stime in /proc
+MAX_SERIES = 600  # the seconds of a run that are sent; a longer run is averaged down to this many
+
+
+def iops_series(text):
+    """The IOPS of every second of the measured part, from the log that fio wrote (`<name>_iops.log`).
+
+    A line is the time in ms, the IOPS that one job had in the second, the direction, the block size and the
+    offset. The jobs write one after another, so the lines of a second are summed. Nothing is told if there are
+    fewer than two seconds.
+    """
+    seconds = {}
+    for line in (text or "").splitlines():
+        parts = [part.strip() for part in line.split(",")]
+        if len(parts) < 2 or not parts[0].isdigit() or not parts[1].isdigit():
+            continue
+        second = round(int(parts[0]) / 1000.0)
+        seconds[second] = seconds.get(second, 0) + int(parts[1])
+    series = [seconds[second] for second in sorted(seconds)]
+    if len(series) < 2:
+        return []
+    if len(series) > MAX_SERIES:
+        step = -(-len(series) // MAX_SERIES)
+        series = [round(sum(series[i:i + step]) / len(series[i:i + step])) for i in range(0, len(series), step)]
+    return series
+
+
+def host_series(text, runtime):
+    """What the server and the machine around it did in every second of the measured window, from the lines of
+    bench/measure.sh (see sample_server there). The window is the last `runtime` seconds of the lines.
+
+    A second is the interval between two samples. What is told, each as a list of numbers in time order:
+    the processor time of the server (percent of a core), of the machine (busy, iowait, steal: percent of all
+    of its processors), the stall of the machine on io and on cpu (percent of the time, from the pressure
+    of the kernel), and of the disk that did the most in the window: its IOPS, MiB/s, the time that it was
+    busy (percent) and the wait of a read and of a write (ms). Nothing is told if there is no window.
+    """
+    server, cpu, psi, disks = [], [], [], {}
+    for line in (text or "").splitlines():
+        parts = line.split()
+        if not parts:
+            continue
+        try:
+            if parts[0] == "S" and len(parts) == 10:
+                cpu.append([int(p) for p in parts[1:]])
+            elif parts[0] == "P" and len(parts) == 4:
+                psi.append([int(p) for p in parts[1:]])
+            elif parts[0] == "D" and len(parts) == 10:
+                disks.setdefault(parts[2], []).append([int(parts[1])] + [int(p) for p in parts[3:]])
+            elif len(parts) == 5 and all(p.isdigit() for p in parts):
+                server.append([int(p) for p in parts])
+        except ValueError:
+            continue
+    if len(server) < 3:
+        return {}
+    start = server[-1][0] - runtime * 1000
+
+    def intervals(rows):
+        """The pairs of samples that follow each other, a second or so apart, that end in the window."""
+        found = []
+        for before, after in zip(rows, rows[1:]):
+            seconds = (after[0] - before[0]) / 1000.0
+            if after[0] > start and 0.3 < seconds < 3:
+                found.append((before, after, seconds))
+        return found
+
+    found = {}
+    found["server_cpu_pct"] = [
+        (a[1] - b[1] + a[2] - b[2]) / CLOCK_TICKS / s * 100 for b, a, s in intervals(server)
+    ]
+    ticks = [(b[1:], a[1:]) for b, a, s in intervals(cpu)]
+    busy, wait, steal = [], [], []
+    for b, a in ticks:
+        delta = [x - y for x, y in zip(a, b)]
+        total = sum(delta)
+        if total > 0:
+            busy.append((total - delta[3] - delta[4]) / total * 100)
+            wait.append(delta[4] / total * 100)
+            steal.append(delta[7] / total * 100)
+    found.update(host_busy_pct=busy, host_iowait_pct=wait, host_steal_pct=steal)
+    found["psi_io_pct"] = [min(100.0, (a[1] - b[1]) / (s * 1e6) * 100) for b, a, s in intervals(psi)]
+    found["psi_cpu_pct"] = [min(100.0, (a[2] - b[2]) / (s * 1e6) * 100) for b, a, s in intervals(psi)]
+
+    def busiest():
+        best, work = None, 0
+        for name, rows in disks.items():
+            done = sum((a[2] - b[2]) + (a[5] - b[5]) for b, a, s in intervals(rows))
+            if done > work:
+                best, work = name, done
+        return best
+
+    disk = busiest()
+    if disk:
+        rows = intervals(disks[disk])
+        # Fields of a sample: time, reads, sectors read, ms reading, writes, sectors written, ms writing, ms busy.
+        found["disk_iops"] = [((a[1] - b[1]) + (a[4] - b[4])) / s for b, a, s in rows]
+        found["disk_mib_s"] = [((a[2] - b[2]) + (a[5] - b[5])) * 512 / 1048576 / s for b, a, s in rows]
+        found["disk_util_pct"] = [min(100.0, (a[7] - b[7]) / (s * 1000) * 100) for b, a, s in rows]
+        found["disk_r_await_ms"] = [(a[3] - b[3]) / (a[1] - b[1]) if a[1] > b[1] else 0.0 for b, a, s in rows]
+        found["disk_w_await_ms"] = [(a[6] - b[6]) / (a[4] - b[4]) if a[4] > b[4] else 0.0 for b, a, s in rows]
+    result = {name: [round(max(v, 0.0), 1) for v in values][-MAX_SERIES:] for name, values in found.items() if values}
+    if result and disk:
+        result["disk"] = disk
+    return result
 
 
 def server_load(text, runtime, iops):
@@ -477,6 +586,12 @@ def build_submission(json_path, machine):
 
     stats = job["read"] if job["read"].get("io_bytes") else job["write"]
     run.update(server_load(read_text(base + ".server-stat"), int(options["runtime"]), stats.get("iops")))
+    host = host_series(read_text(base + ".server-stat"), int(options["runtime"]))
+    if host:
+        run["host_series"] = host
+    series = iops_series(read_text(base + "_iops.log"))
+    if series:
+        run["iops_series"] = series
     ended = fio.get("timestamp") or time.time()
     started = ended - (stats.get("runtime", 0) / 1000.0)
 
