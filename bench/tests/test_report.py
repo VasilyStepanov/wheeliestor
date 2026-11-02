@@ -276,18 +276,30 @@ class MatrixTest(unittest.TestCase):
                 names.append(line.split("--name ")[1].split(" ")[0])
         return names
 
-    def test_the_loads_are_in_the_order_of_the_table(self):
+    def test_a_write_comes_before_the_read_of_the_same_kind(self):
         names = self.runs_of()
-        # The loads are in the order of the table of the docs: by block, depth, jobs and mode.
         loads = []
         for name in names:
             load = name.rsplit("_", 1)[0] if not name.endswith("uring-ms") else name[: -len("_uring-ms")]
             if load not in loads:
                 loads.append(load)
-        self.assertEqual(loads, ["randread_qd1_nj1", "randwrite_qd1_nj1", "seqread_4k_qd1_nj1",
-                                 "seqwrite_4k_qd1_nj1", "randread_qd16_nj1", "randwrite_qd16_nj1",
-                                 "randread_qd16_nj8", "randwrite_qd16_nj8", "seqread_1m_nj4",
-                                 "seqwrite_1m_nj4"])
+        self.assertEqual(loads, ["seqwrite_1m_nj4", "seqread_1m_nj4", "seqwrite_4k_qd1_nj1",
+                                 "seqread_4k_qd1_nj1", "randwrite_qd1_nj1", "randread_qd1_nj1",
+                                 "randwrite_qd16_nj1", "randread_qd16_nj1", "randwrite_qd16_nj8",
+                                 "randread_qd16_nj8"])
+
+    def test_the_run_after_a_write_waits_for_the_disk(self):
+        lines = self.dry_run("--variants", "libc,uring").stdout.splitlines()
+        runs = [i for i, line in enumerate(lines) if "bench/measure.sh" in line]
+        waits = [i for i, line in enumerate(lines) if line.startswith("== cooldown: 30 s")]
+        # Ten loads of two variants: five of them are writes, and every run of a write is followed by the wait,
+        # except the last run of all, which has nothing after it.
+        self.assertEqual(len(waits), 10)
+        for i in waits:
+            self.assertIn("write", lines[runs[[r for r in range(len(runs)) if runs[r] < i][-1]]].split("--mode ")[1].split(" ")[0])
+            self.assertIn("bench/measure.sh", lines[i + 1])
+        self.assertNotIn("cooldown", self.dry_run("--cooldown", "0").stdout)
+        self.assertEqual(self.dry_run("--cooldown", "soon").returncode, 2)
 
     @staticmethod
     def variant_of(name):
