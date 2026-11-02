@@ -501,6 +501,23 @@ class PrepareOptionsTest(unittest.TestCase):
         self.assertIn("--idle is a number of seconds", self.measure("--idle", "soon").stderr)
         self.assertIn("--idle-max is a number of seconds", self.measure("--idle-max=-1").stderr)
 
+    def test_the_latency_of_null_blk_is_checked(self):
+        self.assertIn("is for --data null_blk", self.measure("--null-blk-latency", "100").stderr)
+        self.assertIn("is for --data null_blk", self.measure("--null_blk_latency=100").stderr)
+        for bad in ("0", "soon", "1000000", "-5", "1.5"):
+            result = self.measure("--data", "null_blk", "--null-blk-latency", bad)
+            if sys.platform.startswith("linux"):
+                self.assertIn("a number of microseconds, 1 to 999999", result.stderr, bad)
+        self.assertIn("--data must be disk, tmpfs, device or null_blk", self.measure("--data", "ram").stderr)
+
+    def test_the_matrix_gives_null_blk_to_every_run(self):
+        result = subprocess.run([os.path.join(BENCH, "matrix.sh"), "--dry-run", "--data", "null_blk", "--null-blk-latency", "200",
+                                 "--out", "/nonexistent"], capture_output=True, text=True)
+        runs = [line for line in result.stdout.splitlines() if "bench/measure.sh" in line]
+        self.assertEqual(len(runs), 30, result.stderr)
+        for run in runs:
+            self.assertIn("--data null_blk --null-blk-latency 200", run)
+
     def test_the_idle_script_waits_for_a_quiet_disk(self):
         import tempfile
 
