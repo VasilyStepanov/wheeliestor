@@ -400,9 +400,21 @@ def iops_series(text):
     return series
 
 
-def host_series(text, runtime):
+# How long after the end of fio a line of the sampler is still of the run: only what the clocks of fio and of the
+# sampler may differ by. A sample that is a second after the end spans the idle part, so it is left out.
+END_GRACE_MS = 200
+
+
+def before_end(rows, end_ms):
+    """The rows (time in ms first) up to the end of the run. The sampler goes on until the script is done, and with
+    a profile that is long after fio, so that the last lines may be of a machine with nothing to do."""
+    return rows if end_ms is None else [row for row in rows if row[0] <= end_ms + END_GRACE_MS]
+
+
+def host_series(text, runtime, end_ms=None):
     """What the server and the machine around it did in every second of the measured window, from the lines of
-    bench/measure.sh (see sample_server there). The window is the last `runtime` seconds of the lines.
+    bench/measure.sh (see sample_server there). The window is the last `runtime` seconds of the lines up to `end_ms`,
+    the moment that fio ended (up to the last line, if there is none).
 
     A second is the interval between two samples. What is told, each as a list of numbers in time order:
     the processor time of the server (percent of a core), of the machine (busy, iowait, steal: percent of all
@@ -426,6 +438,8 @@ def host_series(text, runtime):
                 server.append([stat_ms(int(parts[0]))] + [int(p) for p in parts[1:]])
         except ValueError:
             continue
+    server, cpu, psi = before_end(server, end_ms), before_end(cpu, end_ms), before_end(psi, end_ms)
+    disks = {name: before_end(rows, end_ms) for name, rows in disks.items()}
     if len(server) < 3:
         return {}
     start = server[-1][0] - runtime * 1000
@@ -484,12 +498,12 @@ def stat_ms(t):
     return t // 1_000_000 if t > 10**14 else t
 
 
-def server_load(text, runtime, iops):
+def server_load(text, runtime, iops, end_ms=None):
     """What the server spent in the measured window, out of the lines of bench/measure.sh.
 
     A line is the time in ms, the ticks of the server in user and in kernel code, and its
     voluntary and involuntary context switches. The window is the last `runtime` seconds
-    of the lines, the run ending with the last of them. Nothing is told if the window is not
+    of the lines up to `end_ms`, the moment that fio ended (up to the last line, if there is none). Nothing is told if the window is not
     there, or if the lines are not as expected.
     """
     rows = []
@@ -497,6 +511,7 @@ def server_load(text, runtime, iops):
         parts = line.split()
         if len(parts) == 5 and all(part.isdigit() for part in parts):
             rows.append([stat_ms(int(parts[0]))] + [int(part) for part in parts[1:]])
+    rows = before_end(rows, end_ms)
     if len(rows) < 2 or not iops:
         return {}
     last = rows[-1]
@@ -590,8 +605,10 @@ def build_submission(json_path, machine):
         run["disk_threads"] = disk_threads
 
     stats = job["read"] if job["read"].get("io_bytes") else job["write"]
-    run.update(server_load(read_text(base + ".server-stat"), int(options["runtime"]), stats.get("iops")))
-    host = host_series(read_text(base + ".server-stat"), int(options["runtime"]))
+    # The sampler runs on after fio (long with a profile): its lines count up to the end of fio.
+    end_ms = fio.get("timestamp_ms") or (fio["timestamp"] * 1000 if fio.get("timestamp") else None)
+    run.update(server_load(read_text(base + ".server-stat"), int(options["runtime"]), stats.get("iops"), end_ms))
+    host = host_series(read_text(base + ".server-stat"), int(options["runtime"]), end_ms)
     if host:
         run["host_series"] = host
     series = iops_series(read_text(base + "_iops.log"))
