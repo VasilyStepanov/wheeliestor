@@ -291,7 +291,7 @@ class MatrixTest(unittest.TestCase):
     def test_the_run_after_a_write_waits_for_the_disk(self):
         lines = self.dry_run("--variants", "libc,uring").stdout.splitlines()
         runs = [i for i, line in enumerate(lines) if "bench/measure.sh" in line]
-        waits = [i for i, line in enumerate(lines) if line.startswith("== cooldown: 30 s")]
+        waits = [i for i, line in enumerate(lines) if line.startswith("== cooldown: 5 s")]
         # Ten loads of two variants: five of them are writes, and every run of a write is followed by the wait,
         # except the last run of all, which has nothing after it.
         self.assertEqual(len(waits), 10)

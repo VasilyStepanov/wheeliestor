@@ -18,7 +18,7 @@ usage() {
   --seed N          зерно порядка вариантов (по умолчанию: время; оно
                     печатается, чтобы порядок можно было повторить)
   --cooldown SEC    пауза после каждого прогона записи, перед следующим прогоном
-                    (по умолчанию: 30; 0 без паузы)
+                    (по умолчанию: 5; 0 без паузы)
   --dry-run         только сказать, что будет запущено
   --no-build        не собирать образы
   --submit URL      отправлять результаты на этот сервер результатов, а не на
@@ -84,7 +84,7 @@ LOADS=(
     randread_qd16_nj8:randread:4k:16:8
 )
 
-out="" variants="libc,alibc,uring" dry_run=0 build=1 seed="" submit_url="" no_submit=0 cooldown=30
+out="" variants="libc,alibc,uring" dry_run=0 build=1 seed="" submit_url="" no_submit=0 cooldown=5
 passed=()
 # A run is long unless the caller says otherwise.
 runtime_default=(--runtime 15) ramp_default=(--ramp 5)
