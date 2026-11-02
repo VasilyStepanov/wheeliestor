@@ -518,6 +518,15 @@ class PrepareOptionsTest(unittest.TestCase):
         for run in runs:
             self.assertIn("--data null_blk --null-blk-latency 200", run)
 
+    def test_the_limit_of_the_server_is_a_number_of_cores(self):
+        for bad in ("0", "0.0", "half", "-1", "1.2.3", ".5", "5.", "1e3"):
+            result = self.measure("--server-cpu-limit", bad)
+            self.assertIn("--server-cpu-limit", result.stderr, bad)
+            self.assertEqual(result.returncode, 2, bad)
+        # A good one passes the check, and goes on to the thing that the test does not have (docker).
+        self.assertNotIn("--server-cpu-limit", self.measure("--server-cpu-limit", "0.5").stderr)
+        self.assertNotIn("--server-cpu-limit", self.measure("--server-cpu-limit=2").stderr)
+
     def test_the_idle_script_waits_for_a_quiet_disk(self):
         import tempfile
 

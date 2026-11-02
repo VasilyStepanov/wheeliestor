@@ -34,6 +34,13 @@ usage() {
   --fio-arg ARG     ещё один аргумент для fio, например --fio-arg --norandommap;
                     можно повторять
   --server-cpus LIST CPU, разрешённые серверу, например 8-11 (по умолчанию: все)
+  --server-cpu-limit N
+                    сколько процессорного времени сервер может занять самое большее,
+                    в ядрах, дробное число: 0.5 это половина ядра (квота планировщика,
+                    `docker --cpus`). Так сервер упирается в процессор раньше, чем в
+                    диск, даже на быстром процессоре. Квота работает порциями по 100 мс, и
+                    пока она кончилась, сервер стоит: задержка (особенно p99) при этом
+                    рваная, поэтому для её изучения берите --server-cpus
   --client-cpus LIST CPU для заданий fio, по одному на задание, например 12-19
                     (по умолчанию: все)
 
@@ -96,7 +103,7 @@ USAGE
 
 bs=4k mode=randread depth=16 numjobs=1 queues=1 sync=1 runtime=10 ramp=3 size=1g
 backend=uring multishot=0 client_backend="" client_multishot="" direct=1 data=disk threads="" disk_threads=""
-complete_max="" complete_min="" submit_batch="" server_cpus="" client_cpus=""
+complete_max="" complete_min="" submit_batch="" server_cpus="" client_cpus="" server_cpu_limit=""
 prepare=none idle=0 idle_max=60 null_blk_latency=
 name="" out=results build=1 keep=0
 profile=0 profile_window="" submit_url="" no_submit=0
@@ -125,6 +132,7 @@ while [ $# -gt 0 ]; do
     --submit) submit_url=$2; shift 2 ;;
     --no-submit) no_submit=1; shift ;;
     --server-cpus) server_cpus=$2; shift 2 ;;
+    --server-cpu-limit) server_cpu_limit=$2; shift 2 ;;
     --client-cpus) client_cpus=$2; shift 2 ;;
     --backend) backend=$2; shift 2 ;;
     --multishot) multishot=1; shift ;;
@@ -208,6 +216,20 @@ esac
 # A file on a device, one that is given or one that is made: no filesystem in the way.
 block=0
 case $data in device | null_blk) block=1 ;; esac
+
+case $server_cpu_limit in
+'') ;;
+*[!0-9.]* | *.*.* | . | .* | *.)
+    echo "bench/measure.sh: --server-cpu-limit is a number of cores, such as 0.5 or 2" >&2
+    exit 2
+    ;;
+*)
+    if ! awk -v n="$server_cpu_limit" 'BEGIN {exit !(n > 0)}'; then
+        echo "bench/measure.sh: --server-cpu-limit must be more than 0" >&2
+        exit 2
+    fi
+    ;;
+esac
 
 case $prepare in
 none | fill) ;;
@@ -397,6 +419,7 @@ WHEELIE_QUEUE_DEPTH=$queue_depth
 WHEELIE_FILE_SIZE_MB=$file_mb
 WHEELIE_RESULTS=$out_abs
 WHEELIE_SERVER_CPUS=$server_cpus
+WHEELIE_SERVER_CPU_LIMIT=${server_cpu_limit:-0}
 WHEELIE_CLIENT_CPUS=$client_cpus
 ENV
 
