@@ -126,6 +126,20 @@ class BuildTest(unittest.TestCase):
         self.assertEqual(submit.server_load(None, 3, 4000), {})
         self.assertEqual(submit.server_load("garbage\n1 2", 3, 4000), {})
 
+    def test_the_state_of_the_disk_before_the_run_goes_with_the_result(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = write_result(d)
+            with open(os.path.join(d, "case.settings"), "a") as handle:
+                handle.write("WHEELIE_PREPARE=fill\nWHEELIE_DISCARD=done\nWHEELIE_IDLE=calm\nWHEELIE_IDLE_WAITED=4\nWHEELIE_DISK_TEMP_C=41\n")
+            run = submit.build_submission(path, MACHINE)["run"]
+            self.assertEqual((run["prepare"], run["discard"], run["idle"], run["idle_waited_s"], run["disk_temp_c"]),
+                             ("fill", "done", "calm", 4, 41))
+        with tempfile.TemporaryDirectory() as d:
+            run = submit.build_submission(write_result(d), MACHINE)["run"]
+        # A run that did not write it down says nothing of it, and an empty temperature is none.
+        for key in ("prepare", "discard", "idle", "idle_waited_s", "disk_temp_c"):
+            self.assertNotIn(key, run)
+
     def test_the_lines_with_the_time_in_nanoseconds_are_read_as_those_in_milliseconds(self):
         # A date that does not know %3N gives the nanoseconds: the load must not come out a million times smaller.
         ms = [(1_793_000_000_000 + 1000 * second, 50 * second, 25 * second, 1500 * second, 500 * second) for second in range(0, 11)]

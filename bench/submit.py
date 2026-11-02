@@ -603,6 +603,17 @@ def build_submission(json_path, machine):
         run["threads"] = threads
     if disk_threads and server_backend == "alibc":
         run["disk_threads"] = disk_threads
+    # How the disk was before the measure (bench/measure.sh --prepare, --idle): told only if it was written down.
+    if settings.get("WHEELIE_PREPARE") in ("none", "fill"):
+        run["prepare"] = settings["WHEELIE_PREPARE"]
+    if settings.get("WHEELIE_DISCARD") in ("none", "done", "unsupported"):
+        run["discard"] = settings["WHEELIE_DISCARD"]
+    if settings.get("WHEELIE_IDLE") in ("none", "calm", "busy"):
+        run["idle"] = settings["WHEELIE_IDLE"]
+        if settings.get("WHEELIE_IDLE_WAITED", "").isdigit():
+            run["idle_waited_s"] = int(settings["WHEELIE_IDLE_WAITED"])
+    if settings.get("WHEELIE_DISK_TEMP_C", "").isdigit():
+        run["disk_temp_c"] = int(settings["WHEELIE_DISK_TEMP_C"])
 
     stats = job["read"] if job["read"].get("io_bytes") else job["write"]
     # The sampler runs on after fio (long with a profile): its lines count up to the end of fio.
