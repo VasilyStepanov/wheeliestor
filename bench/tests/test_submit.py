@@ -166,6 +166,27 @@ class BuildTest(unittest.TestCase):
                 handle.write("\n".join(lines))
             self.assertIn("server_cpu_pct", submit.build_submission(path, MACHINE)["run"]["host_series"])
 
+    def test_the_lines_after_the_end_of_fio_are_not_of_the_run(self):
+        # The sampler goes on after fio (long, with a profile): ten idle seconds follow the run of six.
+        lines = []
+        for k in range(16):
+            busy = min(k, 5)
+            t = 1_793_000_000_000 + 1000 * k
+            lines.append("%d %d %d %d %d" % (t, 50 * busy, 0, 10 * busy, 5 * busy))
+            lines.append("S %d %d 0 %d %d %d 0 0 %d" % (t, 100 * busy + 100 * (k - busy) * 0, 100 * busy, 140 * busy + 400 * (k - busy), 20 * busy, 40 * busy))
+            lines.append("P %d %d %d" % (t, 100000 * busy, 0))
+            lines.append("D %d sda %d %d %d %d %d %d %d" % (t, 1000 * busy, 16000 * busy, 3000 * busy, 3000 * busy, 24000 * busy, 6000 * busy, 500 * busy))
+        text = "\n".join(lines)
+        end_ms = 1_793_000_000_000 + 5000
+        series = submit.host_series(text, 3, end_ms)
+        self.assertEqual(set(series["server_cpu_pct"]), {50.0})
+        self.assertEqual(set(series["disk_iops"]), {4000.0})
+        # Without the end of fio the window is the idle tail, which is what the pages used to show.
+        self.assertEqual(set(submit.host_series(text, 3)["server_cpu_pct"]), {0.0})
+        load = submit.server_load(text, 3, 4000, end_ms)
+        self.assertEqual(load["server_cpu_usr_pct"], 50.0)
+        self.assertEqual(submit.server_load(text, 3, 4000)["server_cpu_usr_pct"], 0.0)
+
     def test_the_iops_of_every_second_come_from_the_log_of_fio(self):
         # Two jobs, a second each: the jobs write one after another, and the lines of a second add up.
         log = "999, 6000, 1, 0, 0\n2000, 7000, 1, 0, 0\n3001, 500, 1, 0, 0\n1000, 100, 1, 0, 0\n1999, 200, 1, 0, 0\n3000, 300, 1, 0, 0\n"
