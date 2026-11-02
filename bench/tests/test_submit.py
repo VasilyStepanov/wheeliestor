@@ -140,6 +140,19 @@ class BuildTest(unittest.TestCase):
         for key in ("prepare", "discard", "idle", "idle_waited_s", "disk_temp_c"):
             self.assertNotIn(key, run)
 
+    def test_the_limit_of_the_server_goes_with_the_result(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = write_result(d)
+            with open(os.path.join(d, "case.settings"), "a") as handle:
+                handle.write("WHEELIE_SERVER_CPU_LIMIT=0.5\n")
+            self.assertEqual(submit.build_submission(path, MACHINE)["run"]["server_cpu_limit"], 0.5)
+        for none in ("0", "", "half"):
+            with tempfile.TemporaryDirectory() as d:
+                path = write_result(d)
+                with open(os.path.join(d, "case.settings"), "a") as handle:
+                    handle.write(f"WHEELIE_SERVER_CPU_LIMIT={none}\n")
+                self.assertNotIn("server_cpu_limit", submit.build_submission(path, MACHINE)["run"], none)
+
     def test_the_device_of_null_blk_says_its_latency_in_the_place_of_the_data(self):
         self.assertEqual(submit.data_of({"WHEELIE_DATA": "null_blk", "WHEELIE_NULL_BLK_LATENCY_US": "100"}), "nullb-100us")
         self.assertEqual(submit.data_of({"WHEELIE_DATA": "null_blk"}), "nullb")

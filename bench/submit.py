@@ -609,6 +609,9 @@ def build_submission(json_path, machine):
     for key, name in (("server_cpus", "WHEELIE_SERVER_CPUS"), ("client_cpus", "WHEELIE_CLIENT_CPUS")):
         if settings.get(name):
             run[key] = settings[name]
+    limit = settings.get("WHEELIE_SERVER_CPU_LIMIT", "")
+    if limit not in ("", "0") and re.fullmatch(r"[0-9]+(\.[0-9]+)?", limit):
+        run["server_cpu_limit"] = float(limit)
     if threads:
         run["threads"] = threads
     if disk_threads and server_backend == "alibc":

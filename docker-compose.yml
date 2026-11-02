@@ -24,6 +24,8 @@ services:
       target: server
     image: wheeliestor-server
     cpuset: ${WHEELIE_SERVER_CPUS:-}
+    # A share of the CPU time (a quota of the scheduler), not whole cores: 0.5 is half of a core. 0 is no limit.
+    cpus: ${WHEELIE_SERVER_CPU_LIMIT:-0}
     environment:
       WHEELIE_BACKEND: ${WHEELIE_BACKEND:-uring}
       WHEELIE_MULTISHOT: ${WHEELIE_MULTISHOT:-0}
