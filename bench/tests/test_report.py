@@ -518,6 +518,17 @@ class PrepareOptionsTest(unittest.TestCase):
         for run in runs:
             self.assertIn("--data null_blk --null-blk-latency 200", run)
 
+    def test_the_cpus_are_a_list_and_a_fraction_goes_to_the_limit(self):
+        for option in ("--server-cpus", "--client-cpus"):
+            for bad in ("0.5", "a", "0-", "-1", "1,,2", "1--2", "0,x"):
+                result = self.measure(option, bad)
+                self.assertIn(option + " is a list of CPUs", result.stderr, (option, bad))
+                self.assertEqual(result.returncode, 2, (option, bad))
+            for good in ("0", "0-3", "0,2", "4-7,12"):
+                self.assertNotIn("list of CPUs", self.measure(option, good).stderr, (option, good))
+        self.assertIn("use --server-cpu-limit", self.measure("--server-cpus", "0.5").stderr)
+        self.assertNotIn("use --server-cpu-limit", self.measure("--client-cpus", "0.5").stderr)
+
     def test_the_limit_of_the_server_is_a_number_of_cores(self):
         for bad in ("0", "0.0", "half", "-1", "1.2.3", ".5", "5.", "1e3"):
             result = self.measure("--server-cpu-limit", bad)
