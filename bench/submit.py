@@ -417,13 +417,13 @@ def host_series(text, runtime):
             continue
         try:
             if parts[0] == "S" and len(parts) == 10:
-                cpu.append([int(p) for p in parts[1:]])
+                cpu.append([stat_ms(int(parts[1]))] + [int(p) for p in parts[2:]])
             elif parts[0] == "P" and len(parts) == 4:
-                psi.append([int(p) for p in parts[1:]])
+                psi.append([stat_ms(int(parts[1]))] + [int(p) for p in parts[2:]])
             elif parts[0] == "D" and len(parts) == 10:
-                disks.setdefault(parts[2], []).append([int(parts[1])] + [int(p) for p in parts[3:]])
+                disks.setdefault(parts[2], []).append([stat_ms(int(parts[1]))] + [int(p) for p in parts[3:]])
             elif len(parts) == 5 and all(p.isdigit() for p in parts):
-                server.append([int(p) for p in parts])
+                server.append([stat_ms(int(parts[0]))] + [int(p) for p in parts[1:]])
         except ValueError:
             continue
     if len(server) < 3:
@@ -479,6 +479,11 @@ def host_series(text, runtime):
     return result
 
 
+def stat_ms(t):
+    """The time of a line of the sampler in ms. A date that does not know %3N (uutils 0.8) gives it in ns."""
+    return t // 1_000_000 if t > 10**14 else t
+
+
 def server_load(text, runtime, iops):
     """What the server spent in the measured window, out of the lines of bench/measure.sh.
 
@@ -491,7 +496,7 @@ def server_load(text, runtime, iops):
     for line in (text or "").splitlines():
         parts = line.split()
         if len(parts) == 5 and all(part.isdigit() for part in parts):
-            rows.append([int(part) for part in parts])
+            rows.append([stat_ms(int(parts[0]))] + [int(part) for part in parts[1:]])
     if len(rows) < 2 or not iops:
         return {}
     last = rows[-1]

@@ -126,6 +126,13 @@ class BuildTest(unittest.TestCase):
         self.assertEqual(submit.server_load(None, 3, 4000), {})
         self.assertEqual(submit.server_load("garbage\n1 2", 3, 4000), {})
 
+    def test_the_lines_with_the_time_in_nanoseconds_are_read_as_those_in_milliseconds(self):
+        # A date that does not know %3N gives the nanoseconds: the load must not come out a million times smaller.
+        ms = [(1_793_000_000_000 + 1000 * second, 50 * second, 25 * second, 1500 * second, 500 * second) for second in range(0, 11)]
+        as_ns = "\n".join("%d %d %d %d %d" % (t * 1_000_000 + 123456, *rest) for t, *rest in ms)
+        self.assertEqual(submit.server_load(as_ns, 3, 4000),
+                         {"server_cpu_usr_pct": 50.0, "server_cpu_sys_pct": 25.0, "server_ctx_per_io": 0.5})
+
     def test_the_machine_around_the_server_comes_from_the_lines_of_the_sampler(self):
         # Five seconds, a second apart. Per second: the server spends 50% of a core; the 4 processors of the machine
         # tick 400, 20 of them in iowait and 40 in steal; the machine is stalled on io for 100 ms; the disk sda does

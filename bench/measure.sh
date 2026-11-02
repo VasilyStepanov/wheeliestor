@@ -427,7 +427,8 @@ sampler_script() {
     cat << 'SH'
 n=$1; i=0
 while [ "$i" -lt "$n" ]; do
-    t=$(date +%s%3N)
+    # Not %3N: the date of uutils 0.8 takes it for %N and gives the nanoseconds.
+    t=$(($(date +%s%N) / 1000000))
     echo "$t $(sed 's/^.*) //' /proc/1/stat | cut -d' ' -f12,13) $(cat /proc/1/task/*/status | awk '/^voluntary_ctxt_switches/ {v += $2} /^nonvoluntary_ctxt_switches/ {w += $2} END {print v, w}')"
     awk -v t="$t" '/^cpu / {print "S", t, $2, $3, $4, $5, $6, $7, $8, $9}' /proc/stat
     io=$(sed -n 's/^some .*total=\([0-9]*\).*/\1/p' /proc/pressure/io 2> /dev/null)

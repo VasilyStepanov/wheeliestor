@@ -449,6 +449,33 @@ class DockerCommandTest(unittest.TestCase):
         self.assertIn("built with sudo", result.stdout + result.stderr)
 
 
+class SamplerTest(unittest.TestCase):
+    """The sampler of the server puts the time of a line in milliseconds, whatever the date does with %3N."""
+
+    def test_the_time_of_a_line_is_in_milliseconds(self):
+        import tempfile
+        import time
+
+        extracted = subprocess.run(
+            ["bash", "-c", f'eval "$(sed -n "/^sampler_script() {{/,/^}}/p" {BENCH}/measure.sh)"; sampler_script'],
+            capture_output=True, text=True, check=True).stdout
+        with tempfile.TemporaryDirectory() as d:
+            script = os.path.join(d, "sampler.sh")
+            with open(script, "w") as handle:
+                handle.write(extracted)
+            # The date of uutils 0.8 takes %3N for %N: the nanoseconds come out.
+            fake = os.path.join(d, "date")
+            with open(fake, "w") as handle:
+                handle.write(f'#!/bin/sh\ncase "$*" in *%3N*) exec {shutil.which("date")} +%s%N;; esac\nexec {shutil.which("date")} "$@"\n')
+            os.chmod(fake, 0o755)
+            before = time.time() * 1000
+            out = subprocess.run(["sh", script, "1"], capture_output=True, text=True, timeout=20,
+                                 env=dict(os.environ, PATH=d + ":" + os.environ["PATH"])).stdout
+        first = out.splitlines()[0].split()
+        self.assertEqual(len(first), 5, out)
+        self.assertLess(abs(int(first[0]) - before), 10000)
+
+
 class OptionSyntaxTest(unittest.TestCase):
     """--option=value is --option value, in the scripts that parse their options themselves."""
 
