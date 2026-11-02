@@ -288,18 +288,19 @@ class MatrixTest(unittest.TestCase):
                                  "randwrite_qd16_nj1", "randread_qd16_nj1", "randwrite_qd16_nj8",
                                  "randread_qd16_nj8"])
 
-    def test_the_run_after_a_write_waits_for_the_disk(self):
-        lines = self.dry_run("--variants", "libc,uring").stdout.splitlines()
-        runs = [i for i, line in enumerate(lines) if "bench/measure.sh" in line]
-        waits = [i for i, line in enumerate(lines) if line.startswith("== cooldown: 5 s")]
-        # Ten loads of two variants: five of them are writes, and every run of a write is followed by the wait,
-        # except the last run of all, which has nothing after it.
-        self.assertEqual(len(waits), 10)
-        for i in waits:
-            self.assertIn("write", lines[runs[[r for r in range(len(runs)) if runs[r] < i][-1]]].split("--mode ")[1].split(" ")[0])
-            self.assertIn("bench/measure.sh", lines[i + 1])
-        self.assertNotIn("cooldown", self.dry_run("--cooldown", "0").stdout)
-        self.assertEqual(self.dry_run("--cooldown", "soon").returncode, 2)
+    def test_every_run_starts_from_the_same_state_of_the_disk(self):
+        runs = [line for line in self.dry_run().stdout.splitlines() if "bench/measure.sh" in line]
+        self.assertEqual(len(runs), 30)
+        for run in runs:
+            self.assertIn("--prepare fill --idle 3", run)
+        # What the caller says is what goes, and the default is not given twice.
+        both = [line for line in self.dry_run("--prepare", "none", "--idle", "0").stdout.splitlines() if "bench/measure.sh" in line]
+        for run in both:
+            self.assertIn("--prepare none", run)
+            self.assertIn("--idle 0", run)
+            self.assertNotIn("--prepare fill", run)
+            self.assertNotIn("--idle 3", run)
+        self.assertNotIn("cooldown", self.dry_run().stdout)
 
     @staticmethod
     def variant_of(name):
@@ -486,6 +487,33 @@ class SamplerTest(unittest.TestCase):
         first = out.splitlines()[0].split()
         self.assertEqual(len(first), 5, out)
         self.assertLess(abs(int(first[0]) - before), 10000)
+
+
+class PrepareOptionsTest(unittest.TestCase):
+    """bench/measure.sh: what it refuses before it starts anything."""
+
+    def measure(self, *arguments, **env):
+        return subprocess.run([os.path.join(BENCH, "measure.sh"), *arguments], capture_output=True, text=True,
+                              env=dict(os.environ, DOCKER="/bin/false", **env))
+
+    def test_the_state_options_are_checked(self):
+        self.assertIn("--prepare must be none or fill", self.measure("--prepare", "rich").stderr)
+        self.assertIn("--idle is a number of seconds", self.measure("--idle", "soon").stderr)
+        self.assertIn("--idle-max is a number of seconds", self.measure("--idle-max=-1").stderr)
+
+    def test_the_idle_script_waits_for_a_quiet_disk(self):
+        import tempfile
+
+        script = subprocess.run(
+            ["bash", "-c", f'eval "$(sed -n "/^idle_script() {{/,/^}}/p" {BENCH}/measure.sh)"; idle_script'],
+            capture_output=True, text=True, check=True).stdout
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "idle.sh")
+            with open(path, "w") as handle:
+                handle.write(script)
+            # The disk of a machine that has none by the name that is looked for is quiet at once: nothing to count.
+            result = subprocess.run(["sh", path, "1", "5", "no-such-disk"], capture_output=True, text=True, timeout=20)
+        self.assertEqual(result.stdout.split(), ["calm", "1"], result.stderr)
 
 
 class OptionSyntaxTest(unittest.TestCase):

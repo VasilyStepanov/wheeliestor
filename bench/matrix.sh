@@ -17,8 +17,11 @@ usage() {
   --variants LIST   варианты через запятую (по умолчанию: libc,alibc,uring)
   --seed N          зерно порядка вариантов (по умолчанию: время; оно
                     печатается, чтобы порядок можно было повторить)
-  --cooldown SEC    пауза после каждого прогона записи, перед следующим прогоном
-                    (по умолчанию: 5; 0 без паузы)
+  --prepare MODE    fill: перед каждым прогоном записать всю область подряд (при
+                    --data device сначала сбросить её), none: не готовить
+                    (по умолчанию: fill, см. ниже)
+  --idle SEC        сколько секунд подряд диск должен молчать перед замером
+                    (по умолчанию: 3; 0 не ждать)
   --dry-run         только сказать, что будет запущено
   --no-build        не собирать образы
   --submit URL      отправлять результаты на этот сервер результатов, а не на
@@ -48,17 +51,17 @@ usage() {
   read      1m, глубина 4, 4 задания
   write     1m, глубина 4, 4 задания
 
-Запись идёт перед чтением того же вида (последовательная 1m, последовательная 4k,
-случайная 4k на глубине 1, 16 и на 16 с 8 заданиями): чтение области, которая
-только что записана тем же образом, мерит то, что и нужно, а не то, что осталось
-от случайной записи (диск хранит такую область россыпью, и последовательное
-чтение из неё идёт со скоростью случайного), и не нетронутые адреса, которые
-диск отдаёт нулями, не читая память. После прогона записи идёт пауза
-(--cooldown): диск ещё сбрасывает кэш записи и собирает мусор, и это не должно
-попасть в следующий замер. Варианты одной нагрузки идут подряд, в случайном
-порядке, который для каждой нагрузки свой: первый прогон после тяжёлой нагрузки
-немного медленнее, и что-то может прогреваться, так что первым не должен быть
-всегда один и тот же вариант. Ни у какого варианта нет приоритета.
+Каждый прогон начинается с одного и того же состояния диска (--prepare fill): область
+записывается подряд блоками 1m, а при --data device сначала сбрасывается (blkdiscard
+первых --size байт устройства, столько же, сколько прогон и так перезаписывает), и
+замер ждёт, пока диск затихнет (--idle). Иначе результат чтения зависит от того, что
+было до него: после случайной записи диск хранит область россыпью, и последовательное
+чтение из неё идёт в разы медленнее (1,1 против 3,6 ГБ/с на одной и той же
+нагрузке), а нетронутые адреса диск отдаёт нулями, не читая память. Запись всё равно
+идёт перед чтением того же вида (так порядок читается проще). Варианты одной
+нагрузки идут подряд, в случайном порядке, который для каждой нагрузки свой: первый
+прогон после тяжёлой нагрузки немного медленнее, и что-то может прогреваться, так что
+первым не должен быть всегда один и тот же вариант. Ни у какого варианта нет приоритета.
 
 Прогон, у которого в каталоге уже есть результат, не запускается снова, так что
 прерванная матрица продолжается с того места, где остановилась, если запустить
@@ -84,10 +87,12 @@ LOADS=(
     randread_qd16_nj8:randread:4k:16:8
 )
 
-out="" variants="libc,alibc,uring" dry_run=0 build=1 seed="" submit_url="" no_submit=0 cooldown=5
+out="" variants="libc,alibc,uring" dry_run=0 build=1 seed="" submit_url="" no_submit=0
 passed=()
 # A run is long unless the caller says otherwise.
 runtime_default=(--runtime 15) ramp_default=(--ramp 5)
+# Every run starts from the same state of the disk, unless the caller says otherwise.
+prepare_default=(--prepare fill) idle_default=(--idle 3)
 
 while [ $# -gt 0 ]; do
     # --option=value is --option value: split once here, where a value that was taken
@@ -97,7 +102,6 @@ while [ $# -gt 0 ]; do
     --out) out=$2; shift 2 ;;
     --variants) variants=$2; shift 2 ;;
     --seed) seed=$2; shift 2 ;;
-    --cooldown) cooldown=$2; shift 2 ;;
     --dry-run) dry_run=1; shift ;;
     --submit) submit_url=$2; shift 2 ;;
     --no-submit) no_submit=1; shift ;;
@@ -113,14 +117,13 @@ while [ $# -gt 0 ]; do
         ;;
     --runtime) runtime_default=(); passed+=("$1"); shift ;;
     --ramp) ramp_default=(); passed+=("$1"); shift ;;
+    --prepare) prepare_default=(); passed+=("$1"); shift ;;
+    --idle) idle_default=(); passed+=("$1"); shift ;;
     *) passed+=("$1"); shift ;;
     esac
 done
 
 variants=${variants//,/ }
-case $cooldown in
-'' | *[!0-9]*) echo "bench/matrix.sh: --cooldown is a number of seconds, not '$cooldown'" >&2; exit 2 ;;
-esac
 
 cd "$(dirname "$0")/.."
 [ -n "$out" ] || out="results/matrix-$(date +%Y%m%d-%H%M%S)"
@@ -186,8 +189,6 @@ shuffle() {
         shuffled[j]=$swap
     done
 }
-# After a write the disk is still busy (it flushes its cache and collects garbage), so the run that follows waits.
-cool_down=0
 for load in "${LOADS[@]}"; do
     IFS=: read -r name mode bs depth numjobs <<< "$load"
     # Every load has an order of the variants of its own.
@@ -203,14 +204,9 @@ for load in "${LOADS[@]}"; do
         command=(bench/measure.sh --no-build --name "$run_name" --out "$out"
             --mode "$mode" --bs "$bs" --depth "$depth" --numjobs "$numjobs"
             $(variant_options "$variant") ${runtime_default[@]+"${runtime_default[@]}"} ${ramp_default[@]+"${ramp_default[@]}"}
+            ${prepare_default[@]+"${prepare_default[@]}"} ${idle_default[@]+"${idle_default[@]}"}
             ${submit_options[@]+"${submit_options[@]}"} ${passed[@]+"${passed[@]}"})
-        if [ "$cool_down" = 1 ] && [ "$cooldown" -gt 0 ]; then
-            echo "== cooldown: $cooldown s after a write"
-            [ "$dry_run" = 1 ] || sleep "$cooldown"
-        fi
-        cool_down=0
         echo "== [$number/$total] ${command[*]}"
-        case $mode in *write) cool_down=1 ;; esac
         if [ "$dry_run" = 0 ]; then
             "${command[@]}" > "$out/run.log" 2>&1 || {
                 echo "bench/matrix.sh: $run_name failed, see $out/run.log" >&2

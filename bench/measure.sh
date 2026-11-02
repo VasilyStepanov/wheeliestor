@@ -60,6 +60,15 @@ usage() {
   --name NAME       имя файлов результата в каталоге вывода
   --out DIR         куда класть результаты (по умолчанию: results)
   --no-build        не собирать образы
+  --prepare MODE    fill: перед замером записать всю область (--size) подряд блоками
+                    1m и дождаться, пока диск затихнет; при --data device область
+                    сначала сбрасывается (blkdiscard первых --size байт устройства:
+                    столько же, сколько прогон и так перезаписывает). none: ничего не
+                    делать, как есть (по умолчанию: none; у matrix.sh: fill)
+  --idle SEC        сколько секунд подряд диск должен молчать (не больше 50 запросов в
+                    секунду), прежде чем начнётся замер; 0 не ждать (по умолчанию: 0;
+                    у matrix.sh: 3). Ждёт не дольше --idle-max
+  --idle-max SEC    сколько ждать тишины самое большее (по умолчанию: 60)
   --keep            оставить контейнеры работать после прогона
   --profile         записать сервер и fio через perf на часть замеряемого
                     времени и сохранить доли слоёв пути запроса в
@@ -83,6 +92,7 @@ USAGE
 bs=4k mode=randread depth=16 numjobs=1 queues=1 sync=1 runtime=10 ramp=3 size=1g
 backend=uring multishot=0 client_backend="" client_multishot="" direct=1 data=disk threads="" disk_threads=""
 complete_max="" complete_min="" submit_batch="" server_cpus="" client_cpus=""
+prepare=none idle=0 idle_max=60
 name="" out=results build=1 keep=0
 profile=0 profile_window="" submit_url="" no_submit=0
 extra_fio=()
@@ -122,6 +132,9 @@ while [ $# -gt 0 ]; do
     --name) name=$2; shift 2 ;;
     --out) out=$2; shift 2 ;;
     --no-build) build=0; shift ;;
+    --prepare) prepare=$2; shift 2 ;;
+    --idle) idle=$2; shift 2 ;;
+    --idle-max) idle_max=$2; shift 2 ;;
     --keep) keep=1; shift ;;
     -h | --help) usage; exit 0 ;;
     *) echo "bench/measure.sh: unknown option '$1'" >&2; usage >&2; exit 2 ;;
@@ -171,6 +184,16 @@ device)
     ;;
 *) echo "bench/measure.sh: --data must be disk, tmpfs or device" >&2; exit 2 ;;
 esac
+
+case $prepare in
+none | fill) ;;
+*) echo "bench/measure.sh: --prepare must be none or fill" >&2; exit 2 ;;
+esac
+for number in idle idle_max; do
+    case ${!number} in
+    '' | *[!0-9]*) echo "bench/measure.sh: --${number//_/-} is a number of seconds" >&2; exit 2 ;;
+    esac
+done
 
 fio_options=()
 if [ -n "$complete_max" ]; then
@@ -313,7 +336,7 @@ cleanup() {
     if [ "$keep" = 0 ]; then
         compose down > /dev/null 2>&1 || true
     fi
-    rm -f "$env_file" "$env_file.sampler"
+    rm -f "$env_file" "$env_file.sampler" "$env_file.idle"
 }
 trap cleanup EXIT
 
@@ -364,6 +387,91 @@ fi
 if [ -n "$client_name" ]; then
     echo "== client: ${client_name#_client-}, not the variant of the server"
 fi
+# The state of the disk before the measure. A read of a region that random writes have left is not the read of
+# a region that was written from the start (the disk keeps the first in pieces, and it is read at a third of the
+# speed), and a disk that is still busy with the run before is not the disk of this run. So the region can be
+# brought to a known state: discarded (on a device), written once from the start, and waited for until the
+# disk is quiet. What was done goes to <name>.settings, and from there with the result.
+disk_of() {
+    basename "$(readlink -f "$1")" | sed -E -e 's/^(nvme[0-9]+n[0-9]+)p[0-9]+$/\1/' -e 's/^(mmcblk[0-9]+)p[0-9]+$/\1/' \
+        -e 's/^((sd|vd|xvd)[a-z]+)[0-9]+$/\1/'
+}
+
+# The script that waits for a quiet disk, in the container, where /proc/diskstats is that of the machine.
+idle_script() {
+    cat << 'SH'
+quiet=$1; max=$2; disk=$3
+ops() {
+    awk -v d="$disk" '(d != "" && $3 == d) || (d == "" && $3 ~ /^(sd[a-z]+|vd[a-z]+|xvd[a-z]+|nvme[0-9]+n[0-9]+|mmcblk[0-9]+)$/) {n += $4 + $8} END {print n + 0}' /proc/diskstats
+    }
+waited=0; calm=0; before=$(ops)
+while [ "$calm" -lt "$quiet" ] && [ "$waited" -lt "$max" ]; do
+    sleep 1
+    waited=$((waited + 1))
+    now=$(ops)
+    if [ $((now - before)) -le 50 ]; then calm=$((calm + 1)); else calm=0; fi
+    before=$now
+done
+if [ "$calm" -ge "$quiet" ]; then echo "calm $waited"; else echo "busy $waited"; fi
+SH
+}
+
+state_prepare=none state_discard=none state_idle=none idle_waited=0 disk_temp=""
+disk_name=""
+[ "$data" = device ] && disk_name=$(disk_of "$WHEELIE_DEVICE")
+
+if [ "$prepare" = fill ] && [ "$data" = tmpfs ]; then
+    echo "== prepare: the file is in memory, there is no disk to prepare"
+elif [ "$prepare" = fill ]; then
+    if [ "$data" = device ]; then
+        # The first --size bytes of the device, what the run overwrites anyway.
+        if compose exec -T server blkdiscard -o 0 -l $((size_mb * 1048576)) /dev/wheelie-bench > "$out_abs/$name.prepare.log" 2>&1; then
+            state_discard=done
+        else
+            state_discard=unsupported
+        fi
+        echo "== prepare: discard of the first ${size_mb} MiB of $WHEELIE_DEVICE: $state_discard"
+    fi
+    echo "== prepare: the region ($size) is written once, from the start, in 1m blocks"
+    if ! compose run --rm -T --user "$(id -u):$(id -g)" client \
+        fio --name=prepare --ioengine=external:/usr/local/lib/wheelie.so \
+        --filename='wheelie\://server\:39900' \
+        --wheelie_backend="$client_backend" --wheelie_multishot="$client_multishot" \
+        --rw=write --bs=1m --iodepth=16 --numjobs=1 --wheelie_queues=1 --sync=0 --size="$size" \
+        --thread --output-format=terse >> "$out_abs/$name.prepare.log" 2>&1; then
+        echo "bench/measure.sh: the region could not be written, see $out_abs/$name.prepare.log" >&2
+        exit 1
+    fi
+    state_prepare=fill
+fi
+if [ "$idle" -gt 0 ]; then
+    idle_script > "$env_file.idle"
+    answer=$($DOCKER compose --env-file "$env_file" "${compose_files[@]}" exec -T server sh -s -- "$idle" "$idle_max" "$disk_name" \
+        < "$env_file.idle" | tail -1 | tr -d '\r')
+    state_idle=${answer%% *}
+    idle_waited=${answer##* }
+    case $idle_waited in '' | *[!0-9]*) idle_waited=0 ;; esac
+    if [ "$state_idle" = calm ]; then
+        echo "== idle: the disk${disk_name:+ $disk_name} was quiet for ${idle}s after waiting ${idle_waited}s"
+    else
+        echo "bench/measure.sh: the disk${disk_name:+ $disk_name} did not go quiet in ${idle_max}s, the run goes on" >&2
+        state_idle=busy
+    fi
+fi
+# The temperature of the disk, if the kernel tells it (an NVMe does, in sysfs).
+if [ -n "$disk_name" ]; then
+    for hwmon in /sys/block/"$disk_name"/device/hwmon*/temp1_input; do
+        if [ -r "$hwmon" ]; then disk_temp=$(($(cat "$hwmon") / 1000)); break; fi
+    done
+fi
+{
+    echo "WHEELIE_PREPARE=$state_prepare"
+    echo "WHEELIE_DISCARD=$state_discard"
+    echo "WHEELIE_IDLE=$state_idle"
+    echo "WHEELIE_IDLE_WAITED=$idle_waited"
+    echo "WHEELIE_DISK_TEMP_C=$disk_temp"
+} >> "$out_abs/$name.settings"
+
 echo "== fio: $mode bs=$bs depth=$depth numjobs=$numjobs queues=$queues sync=$sync, ${ramp}s ramp and ${runtime}s measured"
 # fio also writes the IOPS of every second of the measured part, all jobs together,
 # to <name>_iops.log next to the result: the course of a run, which its summary hides.
