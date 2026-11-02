@@ -78,8 +78,8 @@ usage() {
                     столько же, сколько прогон и так перезаписывает). none: ничего не
                     делать, как есть (по умолчанию: none; у matrix.sh: fill)
   --idle SEC        сколько секунд подряд диск должен молчать (не больше 50 запросов в
-                    секунду), прежде чем начнётся замер; 0 не ждать (по умолчанию: 0;
-                    у matrix.sh: 3). Ждёт не дольше --idle-max
+                    секунду), прежде чем начнётся замер; 0 не ждать (по умолчанию: 2, как у
+                    matrix.sh; для --data tmpfs не ждёт, диска там нет). Ждёт не дольше --idle-max
   --idle-max SEC    сколько ждать тишины самое большее (по умолчанию: 60)
   --keep            оставить контейнеры работать после прогона
   --profile         записать сервер и fio через perf на часть замеряемого
@@ -104,7 +104,7 @@ USAGE
 bs=4k mode=randread depth=16 numjobs=1 queues=1 sync=1 runtime=10 ramp=3 size=1g
 backend=uring multishot=0 client_backend="" client_multishot="" direct=1 data=disk threads="" disk_threads=""
 complete_max="" complete_min="" submit_batch="" server_cpus="" client_cpus="" server_cpu_limit=""
-prepare=none idle=0 idle_max=60 null_blk_latency=
+prepare=none idle=2 idle_max=60 null_blk_latency=
 name="" out=results build=1 keep=0
 profile=0 profile_window="" submit_url="" no_submit=0
 extra_fio=()
@@ -547,7 +547,7 @@ elif [ "$prepare" = fill ]; then
     fi
     state_prepare=fill
 fi
-if [ "$idle" -gt 0 ]; then
+if [ "$idle" -gt 0 ] && [ "$data" != tmpfs ]; then
     idle_script > "$env_file.idle"
     answer=$($DOCKER compose --env-file "$env_file" "${compose_files[@]}" exec -T server sh -s -- "$idle" "$idle_max" "$disk_name" \
         < "$env_file.idle" | tail -1 | tr -d '\r')

@@ -21,7 +21,7 @@ usage() {
                     --data device сначала сбросить её), none: не готовить
                     (по умолчанию: fill, см. ниже)
   --idle SEC        сколько секунд подряд диск должен молчать перед замером
-                    (по умолчанию: 3; 0 не ждать)
+                    (по умолчанию: 2; 0 не ждать)
   --dry-run         только сказать, что будет запущено
   --no-build        не собирать образы
   --submit URL      отправлять результаты на этот сервер результатов, а не на
@@ -36,8 +36,7 @@ usage() {
 Нагрузку и вариант задаёт сама матрица, поэтому --bs, --mode, --depth, --numjobs,
 --queues, --backend, --multishot и --name здесь не принимаются (вариантов
 касается --variants): одну нагрузку с другими параметрами мерит bench/measure.sh.
-Прогон длится 15 секунд после разгона 5 (прогонов в матрице немного, чтобы
-каждый мог быть долгим); --runtime и --ramp меняют это.
+Прогон длится 10 секунд после разгона 3; --runtime и --ramp меняют это.
 
 Нагрузки, каждая на каждом варианте:
 
@@ -90,9 +89,9 @@ LOADS=(
 out="" variants="libc,alibc,uring" dry_run=0 build=1 seed="" submit_url="" no_submit=0
 passed=()
 # A run is long unless the caller says otherwise.
-runtime_default=(--runtime 15) ramp_default=(--ramp 5)
+runtime_default=(--runtime 10) ramp_default=(--ramp 3)
 # Every run starts from the same state of the disk, unless the caller says otherwise.
-prepare_default=(--prepare fill) idle_default=(--idle 3)
+prepare_default=(--prepare fill) idle_default=(--idle 2)
 
 while [ $# -gt 0 ]; do
     # --option=value is --option value: split once here, where a value that was taken

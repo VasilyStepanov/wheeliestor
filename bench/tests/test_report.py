@@ -292,14 +292,14 @@ class MatrixTest(unittest.TestCase):
         runs = [line for line in self.dry_run().stdout.splitlines() if "bench/measure.sh" in line]
         self.assertEqual(len(runs), 30)
         for run in runs:
-            self.assertIn("--prepare fill --idle 3", run)
+            self.assertIn("--prepare fill --idle 2", run)
         # What the caller says is what goes, and the default is not given twice.
         both = [line for line in self.dry_run("--prepare", "none", "--idle", "0").stdout.splitlines() if "bench/measure.sh" in line]
         for run in both:
             self.assertIn("--prepare none", run)
             self.assertIn("--idle 0", run)
             self.assertNotIn("--prepare fill", run)
-            self.assertNotIn("--idle 3", run)
+            self.assertNotIn("--idle 2", run)
         self.assertNotIn("cooldown", self.dry_run().stdout)
 
     @staticmethod
@@ -355,15 +355,15 @@ class MatrixTest(unittest.TestCase):
         self.assertEqual(len(runs), 10)
         self.assertTrue(all(line.endswith("--runtime 5 --direct 0") for line in runs))
         # The runtime that was asked for is the only one, and the ramp keeps its default.
-        self.assertTrue(all(line.count("--runtime") == 1 and "--ramp 5" in line for line in runs))
+        self.assertTrue(all(line.count("--runtime") == 1 and "--ramp 3" in line for line in runs))
 
     def test_a_run_is_long_unless_it_is_told_otherwise(self):
         result = self.dry_run("--variants", "libc")
         runs = [line for line in result.stdout.splitlines() if "bench/measure.sh" in line]
-        self.assertTrue(all("--runtime 15 --ramp 5" in line for line in runs))
+        self.assertTrue(all("--runtime 10 --ramp 3" in line for line in runs))
         result = self.dry_run("--variants", "libc", "--ramp", "2")
         runs = [line for line in result.stdout.splitlines() if "bench/measure.sh" in line]
-        self.assertTrue(all("--runtime 15" in line and line.count("--ramp") == 1 for line in runs))
+        self.assertTrue(all("--runtime 10" in line and line.count("--ramp") == 1 for line in runs))
 
     def test_the_results_go_to_the_default_server_unless_told_otherwise(self):
         def run_lines(*arguments):
