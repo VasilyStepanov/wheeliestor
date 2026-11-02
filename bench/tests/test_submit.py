@@ -140,6 +140,17 @@ class BuildTest(unittest.TestCase):
         for key in ("prepare", "discard", "idle", "idle_waited_s", "disk_temp_c"):
             self.assertNotIn(key, run)
 
+    def test_the_device_of_null_blk_says_its_latency_in_the_place_of_the_data(self):
+        self.assertEqual(submit.data_of({"WHEELIE_DATA": "null_blk", "WHEELIE_NULL_BLK_LATENCY_US": "100"}), "nullb-100us")
+        self.assertEqual(submit.data_of({"WHEELIE_DATA": "null_blk"}), "nullb")
+        self.assertEqual(submit.data_of({"WHEELIE_DATA": "device", "WHEELIE_NULL_BLK_LATENCY_US": "100"}), "device")
+        self.assertEqual(submit.data_of({}), "disk")
+        with tempfile.TemporaryDirectory() as d:
+            path = write_result(d)
+            with open(os.path.join(d, "case.settings"), "a") as handle:
+                handle.write("WHEELIE_DATA=null_blk\nWHEELIE_NULL_BLK_LATENCY_US=250\n")
+            self.assertEqual(submit.build_submission(path, MACHINE)["run"]["data"], "nullb-250us")
+
     def test_the_lines_with_the_time_in_nanoseconds_are_read_as_those_in_milliseconds(self):
         # A date that does not know %3N gives the nanoseconds: the load must not come out a million times smaller.
         ms = [(1_793_000_000_000 + 1000 * second, 50 * second, 25 * second, 1500 * second, 500 * second) for second in range(0, 11)]

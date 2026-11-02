@@ -47,10 +47,15 @@ usage() {
                     multishot recv у клиента (по умолчанию: --multishot, если у
                     клиента бэкенд сервера, и 0, если другой)
   --direct 0|1      сервер открывает файл с O_DIRECT (по умолчанию: 1)
-  --data disk|tmpfs|device
-                    где лежит файл сервера: на томе диска, в памяти (tmpfs) или
-                    на блочном устройстве WHEELIE_DEVICE без файловой системы
-                    (по умолчанию: disk)
+  --data disk|tmpfs|device|null_blk
+                    где лежит файл сервера: на томе диска, в памяти (tmpfs), на
+                    блочном устройстве WHEELIE_DEVICE без файловой системы или на
+                    эмулированном устройстве в памяти с заданной задержкой (null_blk,
+                    Linux, нужен root или `sudo -n`; устройство создаётся на время
+                    прогона и убирается) (по умолчанию: disk)
+  --null-blk-latency US
+                    задержка устройства null_blk, мкс на операцию (по умолчанию: 100);
+                    только с --data null_blk. Так же принимается --null_blk_latency
   --disk-threads N  дисковых потоков в пуле каждого реактора alibc (по умолчанию:
                     16; у других бэкендов пула нет)
   --threads N       потоков сервера, в каждом свой реактор (по умолчанию: по
@@ -92,7 +97,7 @@ USAGE
 bs=4k mode=randread depth=16 numjobs=1 queues=1 sync=1 runtime=10 ramp=3 size=1g
 backend=uring multishot=0 client_backend="" client_multishot="" direct=1 data=disk threads="" disk_threads=""
 complete_max="" complete_min="" submit_batch="" server_cpus="" client_cpus=""
-prepare=none idle=0 idle_max=60
+prepare=none idle=0 idle_max=60 null_blk_latency=
 name="" out=results build=1 keep=0
 profile=0 profile_window="" submit_url="" no_submit=0
 extra_fio=()
@@ -127,6 +132,7 @@ while [ $# -gt 0 ]; do
     --client-multishot) client_multishot=$2; shift 2 ;;
     --direct) direct=$2; shift 2 ;;
     --data) data=$2; shift 2 ;;
+    --null-blk-latency | --null_blk_latency) null_blk_latency=$2; shift 2 ;;
     --threads) threads=$2; shift 2 ;;
     --disk-threads) disk_threads=$2; shift 2 ;;
     --name) name=$2; shift 2 ;;
@@ -182,8 +188,26 @@ device)
         exit 2
     fi
     ;;
-*) echo "bench/measure.sh: --data must be disk, tmpfs or device" >&2; exit 2 ;;
+null_blk)
+    if [ "$(uname -s)" != Linux ]; then
+        echo "bench/measure.sh: --data null_blk needs Linux with the module null_blk (not Docker Desktop of a Mac)" >&2
+        exit 2
+    fi
+    [ -n "$null_blk_latency" ] || null_blk_latency=100
+    ;;
+*) echo "bench/measure.sh: --data must be disk, tmpfs, device or null_blk" >&2; exit 2 ;;
 esac
+if [ "$data" != null_blk ] && [ -n "$null_blk_latency" ]; then
+    echo "bench/measure.sh: --null-blk-latency is for --data null_blk" >&2
+    exit 2
+fi
+case $null_blk_latency in
+'' | [1-9] | [1-9][0-9] | [1-9][0-9][0-9] | [1-9][0-9][0-9][0-9] | [1-9][0-9][0-9][0-9][0-9] | [1-9][0-9][0-9][0-9][0-9][0-9]) ;;
+*) echo "bench/measure.sh: --null-blk-latency is a number of microseconds, 1 to 999999" >&2; exit 2 ;;
+esac
+# A file on a device, one that is given or one that is made: no filesystem in the way.
+block=0
+case $data in device | null_blk) block=1 ;; esac
 
 case $prepare in
 none | fill) ;;
@@ -305,12 +329,67 @@ out_abs=$(cd "$out" && pwd)
 # What compose is told goes to it in a file, not in the environment: docker run
 # with sudo does not get the environment of the script, and a variant that never
 # arrived would be a run of another one.
+# A command that may need root: perf of the processes of the containers does, and so does a device of null_blk.
+privileged() {
+    if [ "$(id -u)" = 0 ]; then "$@"; else sudo -n "$@"; fi
+}
+
+# The device of --data null_blk: made for the run by configfs (so that it has its own latency and goes away with
+# the run, and the module is not loaded again with other parameters), in memory, with a fixed time of an operation
+# and a queue for every core up to eight: a fast disk that has no state, no wear and no warm-up.
+nullb_dir=""
+nullb_remove() {
+    [ -n "$nullb_dir" ] || return 0
+    privileged sh -c 'echo 0 > "$1/power" && rmdir "$1"' _ "$nullb_dir" > /dev/null 2>&1 || true
+    nullb_dir=""
+}
+nullb_create() {
+    local cpus queues waited=0
+    cpus=$(nproc 2> /dev/null || echo 4)
+    queues=$((cpus > 8 ? 8 : cpus))
+    nullb_dir=/sys/kernel/config/nullb/wheelie-$$
+    if ! privileged sh -s -- "$nullb_dir" "$file_mb" "$((null_blk_latency * 1000))" "$queues" << 'SH'; then
+set -e
+[ -d /sys/module/null_blk ] || modprobe null_blk nr_devices=0
+[ -d /sys/kernel/config/nullb ] || mount -t configfs none /sys/kernel/config
+mkdir "$1"
+echo "$2" > "$1/size"
+echo "$3" > "$1/completion_nsec"
+echo 2 > "$1/irqmode"
+echo 2 > "$1/queue_mode"
+echo "$4" > "$1/submit_queues"
+echo 128 > "$1/hw_queue_depth"
+echo 1 > "$1/memory_backed"
+echo 1 > "$1/discard"
+echo 1 > "$1/power"
+SH
+        echo "bench/measure.sh: the device of null_blk could not be made (the module, configfs, root?)" >&2
+        nullb_dir=""
+        exit 1
+    fi
+    # A disk that is made by configfs is called by the name of its directory.
+    WHEELIE_DEVICE=/dev/$(basename "$nullb_dir")
+    while [ ! -b "$WHEELIE_DEVICE" ] && [ "$waited" -lt 50 ]; do sleep 0.1; waited=$((waited + 1)); done
+    if [ ! -b "$WHEELIE_DEVICE" ]; then
+        echo "bench/measure.sh: $WHEELIE_DEVICE did not appear" >&2
+        nullb_remove
+        exit 1
+    fi
+    export WHEELIE_DEVICE
+    echo "== null_blk: $WHEELIE_DEVICE, ${file_mb} MiB in memory, ${null_blk_latency} us an operation, $queues queues"
+    trap nullb_remove EXIT
+}
+if [ "$data" = null_blk ]; then
+    nullb_create
+fi
+
 env_file=$(mktemp)
 cat > "$env_file" << ENV
 WHEELIE_BACKEND=$backend
 WHEELIE_MULTISHOT=$multishot
 WHEELIE_DIRECT=$direct
 WHEELIE_DATA=$data
+WHEELIE_NULL_BLK_LATENCY_US=$null_blk_latency
 WHEELIE_DEVICE=${WHEELIE_DEVICE:-}
 WHEELIE_THREADS=$threads
 WHEELIE_DISK_THREADS=$disk_threads
@@ -324,7 +403,7 @@ ENV
 compose_files=(-f docker-compose.yml)
 if [ "$data" = tmpfs ]; then
     compose_files+=(-f docker-compose.tmpfs.yml)
-elif [ "$data" = device ]; then
+elif [ "$block" = 1 ]; then
     compose_files+=(-f docker-compose.device.yml)
 fi
 
@@ -337,6 +416,7 @@ cleanup() {
         compose down > /dev/null 2>&1 || true
     fi
     rm -f "$env_file" "$env_file.sampler" "$env_file.idle"
+    nullb_remove
 }
 trap cleanup EXIT
 
@@ -373,7 +453,7 @@ esac
 echo "${started#wheelie-server: }" > "$out_abs/$name.server"
 
 # The same for where the file is: a volume that was made before may be on a disk.
-if [ "$data" = device ]; then
+if [ "$block" = 1 ]; then
     echo "== server: the file is the block device $WHEELIE_DEVICE"
 else
     data_type=$(compose exec -T server stat -f -c %T /data | tr -d '\r')
@@ -418,12 +498,12 @@ SH
 
 state_prepare=none state_discard=none state_idle=none idle_waited=0 disk_temp=""
 disk_name=""
-[ "$data" = device ] && disk_name=$(disk_of "$WHEELIE_DEVICE")
+[ "$block" = 1 ] && disk_name=$(disk_of "$WHEELIE_DEVICE")
 
 if [ "$prepare" = fill ] && [ "$data" = tmpfs ]; then
     echo "== prepare: the file is in memory, there is no disk to prepare"
 elif [ "$prepare" = fill ]; then
-    if [ "$data" = device ]; then
+    if [ "$block" = 1 ]; then
         # The first --size bytes of the device, what the run overwrites anyway.
         if compose exec -T server blkdiscard -o 0 -l $((size_mb * 1048576)) /dev/wheelie-bench > "$out_abs/$name.prepare.log" 2>&1; then
             state_discard=done
@@ -494,11 +574,6 @@ run_fio() {
         --write_iops_log="/results/$name" --log_avg_msec=1000 --per_job_logs=0 \
         --eta=always --eta-newline=1 \
         --output-format=normal,json > "$out_abs/$name.out"
-}
-
-# A command that may need root: perf of the processes of the containers does.
-privileged() {
-    if [ "$(id -u)" = 0 ]; then "$@"; else sudo -n "$@"; fi
 }
 
 # The server and fio run in the containers, and the host sees them as

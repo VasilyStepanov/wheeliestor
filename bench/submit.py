@@ -498,6 +498,16 @@ def stat_ms(t):
     return t // 1_000_000 if t > 10**14 else t
 
 
+def data_of(settings):
+    """Where the file of the server was. The device of null_blk says its time of an operation, so that the results
+    of one latency are not taken for those of another: `nullb-100us`."""
+    data = settings.get("WHEELIE_DATA") or "disk"
+    if data == "null_blk":
+        latency = settings.get("WHEELIE_NULL_BLK_LATENCY_US", "")
+        return f"nullb-{latency}us" if latency.isdigit() else "nullb"
+    return data
+
+
 def server_load(text, runtime, iops, end_ms=None):
     """What the server spent in the measured window, out of the lines of bench/measure.sh.
 
@@ -589,7 +599,7 @@ def build_submission(json_path, machine):
         "backend": server_backend,
         "multishot": server_multishot,
         "direct": settings.get("WHEELIE_DIRECT", "1") != "0",
-        "data": settings.get("WHEELIE_DATA") or "disk",
+        "data": data_of(settings),
         "transport": settings.get("WHEELIE_TRANSPORT") or "tcp",
         "options": {k: str(v)[:256] for k, v in options.items() if k not in KNOWN_OPTIONS and v != ""},
     }
