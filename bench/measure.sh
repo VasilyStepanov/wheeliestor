@@ -217,6 +217,20 @@ esac
 block=0
 case $data in device | null_blk) block=1 ;; esac
 
+# A list of CPUs, as cpuset takes it: 0-3, 0,2 or 4. A fraction is not one (docker says "invalid format: 0.5" only
+# after the images are built), and is what --server-cpu-limit is for.
+for list in server_cpus client_cpus; do
+    case ${!list} in
+    '') ;;
+    *[!0-9,-]* | -* | *- | *,,* | *--* | ,* | *, | *-*-*)
+        hint=""
+        [ "$list" = server_cpus ] && hint=" (for a share of the time, such as 0.5, use --server-cpu-limit)"
+        echo "bench/measure.sh: --${list//_/-} is a list of CPUs, such as 0-3 or 0,2${hint}" >&2
+        exit 2
+        ;;
+    esac
+done
+
 case $server_cpu_limit in
 '') ;;
 *[!0-9.]* | *.*.* | . | .* | *.)
