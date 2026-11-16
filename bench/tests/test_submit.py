@@ -78,7 +78,7 @@ class DefaultServerTest(unittest.TestCase):
         return told[0]
 
     def test_a_result_goes_to_the_default_server(self):
-        self.assertEqual(submit.DEFAULT_URL, "http://wheelie.rawstor.io")
+        self.assertEqual(submit.DEFAULT_URL, "https://wheelie.rawstor.io")
         self.assertEqual(self.url_of(["--whoami"], {}), submit.DEFAULT_URL)
 
     def test_the_environment_and_the_option_say_otherwise(self):

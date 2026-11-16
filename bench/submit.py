@@ -82,7 +82,7 @@ MAX_TEXT = 100_000
 # and gives nothing but the right to submit; the server can stop accepting it,
 # and then this version of the script is refused.
 # The server of results that a result goes to when no other is said.
-DEFAULT_URL = "http://wheelie.rawstor.io"
+DEFAULT_URL = "https://wheelie.rawstor.io"
 
 PUBLIC_CODE = "wr1-537aa06f3d3cb5d1cb99"
 LAYER_NAMES = ("network", "copies", "storage", "io_uring", "scheduler", "code", "other")
